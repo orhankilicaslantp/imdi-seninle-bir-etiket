@@ -8,6 +8,8 @@ export interface LabelSettings {
   widthMm: number;
   heightMm: number;
   dpi: Dpi;
+  labelsAcross: number; // yan yana etiket sayısı (1 = tek etiket)
+  horizontalGapMm: number; // etiketler arası yatay boşluk (mm)
 }
 
 export interface LabelPreset {

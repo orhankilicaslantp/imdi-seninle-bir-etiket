@@ -54,6 +54,31 @@ export default function LabelSettingsPanel() {
           <option value={600}>600 dpi</option>
         </select>
       </div>
+      <div className="w-px bg-white/10 self-stretch" />
+      <div className="flex flex-col gap-1">
+        <label>Yan Yana Etiket Sayısı</label>
+        <input
+          type="number"
+          min={1}
+          max={10}
+          className="w-24 bg-[#0f1115] border border-white/10 rounded px-2 py-1"
+          value={labelSettings.labelsAcross}
+          onChange={(e) => setLabelSettings({ labelsAcross: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+        />
+      </div>
+      {labelSettings.labelsAcross > 1 && (
+        <div className="flex flex-col gap-1">
+          <label>Etiketler Arası Boşluk (mm)</label>
+          <input
+            type="number"
+            step={0.1}
+            min={0}
+            className="w-28 bg-[#0f1115] border border-white/10 rounded px-2 py-1"
+            value={labelSettings.horizontalGapMm}
+            onChange={(e) => setLabelSettings({ horizontalGapMm: parseFloat(e.target.value) || 0 })}
+          />
+        </div>
+      )}
     </div>
   );
 }

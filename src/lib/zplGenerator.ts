@@ -29,9 +29,9 @@ const rotationToOrientation = (rotation: number): 'N' | 'R' | 'I' | 'B' => {
   }
 };
 
-function genText(el: TextElement, ctx: GeneratorContext): string {
+function genText(el: TextElement, ctx: GeneratorContext, offsetXDots: number): string {
   const { dpi } = ctx.labelSettings;
-  const x = mmToDots(el.x, dpi);
+  const x = mmToDots(el.x, dpi) + offsetXDots;
   const y = mmToDots(el.y, dpi);
   const h = mmToDots(el.fontSize, dpi);
   const w = h; // varsayılan olarak orantılı
@@ -57,9 +57,9 @@ function genText(el: TextElement, ctx: GeneratorContext): string {
   return lines.join('');
 }
 
-function genShape(el: ShapeElement, ctx: GeneratorContext): string {
+function genShape(el: ShapeElement, ctx: GeneratorContext, offsetXDots: number): string {
   const { dpi } = ctx.labelSettings;
-  const x = mmToDots(el.x, dpi);
+  const x = mmToDots(el.x, dpi) + offsetXDots;
   const y = mmToDots(el.y, dpi);
   const w = Math.max(1, mmToDots(el.width, dpi));
   const h = el.shape === 'line' ? Math.max(1, mmToDots(el.thicknessMm, dpi)) : Math.max(1, mmToDots(el.height, dpi));
@@ -77,23 +77,23 @@ function genBitmapField(elId: string, x: number, y: number, ctx: GeneratorContex
   return `^FO${x},${y}${monoBitmapToGfCommand(bmp)}^FS`;
 }
 
-function genImage(el: ImageElement, ctx: GeneratorContext): string {
+function genImage(el: ImageElement, ctx: GeneratorContext, offsetXDots: number): string {
   const { dpi } = ctx.labelSettings;
-  const x = mmToDots(el.x, dpi);
+  const x = mmToDots(el.x, dpi) + offsetXDots;
   const y = mmToDots(el.y, dpi);
   return genBitmapField(el.id, x, y, ctx);
 }
 
-function genIcon(el: IconElement, ctx: GeneratorContext): string {
+function genIcon(el: IconElement, ctx: GeneratorContext, offsetXDots: number): string {
   const { dpi } = ctx.labelSettings;
-  const x = mmToDots(el.x, dpi);
+  const x = mmToDots(el.x, dpi) + offsetXDots;
   const y = mmToDots(el.y, dpi);
   return genBitmapField(el.id, x, y, ctx);
 }
 
-function genBarcode(el: BarcodeElement, ctx: GeneratorContext): string {
+function genBarcode(el: BarcodeElement, ctx: GeneratorContext, offsetXDots: number): string {
   const { dpi } = ctx.labelSettings;
-  const x = mmToDots(el.x, dpi);
+  const x = mmToDots(el.x, dpi) + offsetXDots;
   const y = mmToDots(el.y, dpi);
   const h = mmToDots(el.height, dpi);
   const orientation = rotationToOrientation(el.rotation);
@@ -117,9 +117,9 @@ function genBarcode(el: BarcodeElement, ctx: GeneratorContext): string {
   return `^FO${x},${y}${by}${barcodeCmd}^FD${escapeFieldData(el.data)}^FS`;
 }
 
-function genQr(el: QrElement, ctx: GeneratorContext): string {
+function genQr(el: QrElement, ctx: GeneratorContext, offsetXDots: number): string {
   const { dpi } = ctx.labelSettings;
-  const x = mmToDots(el.x, dpi);
+  const x = mmToDots(el.x, dpi) + offsetXDots;
   const y = mmToDots(el.y, dpi);
   const orientation = rotationToOrientation(el.rotation);
   return `^FO${x},${y}^BQ${orientation},2,${el.magnification}^FD${el.errorCorrection}A,${escapeFieldData(el.data)}^FS`;
@@ -130,27 +130,38 @@ function escapeFieldData(text: string): string {
   return text.replace(/\\/g, '\\5C').replace(/\^/g, '\\5E').replace(/~/g, '\\7E');
 }
 
-export function generateElementZpl(el: LabelElement, ctx: GeneratorContext): string {
+export function generateElementZpl(el: LabelElement, ctx: GeneratorContext, offsetXDots = 0): string {
   switch (el.type) {
-    case 'text': return genText(el, ctx);
-    case 'shape': return genShape(el, ctx);
-    case 'image': return genImage(el, ctx);
-    case 'icon': return genIcon(el, ctx);
-    case 'barcode': return genBarcode(el, ctx);
-    case 'qr': return genQr(el, ctx);
+    case 'text': return genText(el, ctx, offsetXDots);
+    case 'shape': return genShape(el, ctx, offsetXDots);
+    case 'image': return genImage(el, ctx, offsetXDots);
+    case 'icon': return genIcon(el, ctx, offsetXDots);
+    case 'barcode': return genBarcode(el, ctx, offsetXDots);
+    case 'qr': return genQr(el, ctx, offsetXDots);
     default: return '';
   }
 }
 
 export function generateLabelZpl(elements: LabelElement[], ctx: GeneratorContext): string {
-  const { widthMm, heightMm, dpi } = ctx.labelSettings;
-  const pw = mmToDots(widthMm, dpi);
+  const { widthMm, heightMm, dpi, labelsAcross, horizontalGapMm } = ctx.labelSettings;
+  const labelWidthDots = mmToDots(widthMm, dpi);
+  const gapDots = mmToDots(horizontalGapMm, dpi);
+  const count = Math.max(1, labelsAcross || 1);
+  const pw = count * labelWidthDots + (count - 1) * gapDots;
   const ll = mmToDots(heightMm, dpi);
 
   // Not: Özel fontlar burada indirilmez (~DY üretilmez). Fontların yazıcı belleğine
   // önceden yüklendiği kabul edilir; ZPL'de sadece ^A@ ile bellek adına referans verilir.
   const sorted = [...elements].sort((a, b) => a.zIndex - b.zIndex);
-  const body = sorted.map((el) => generateElementZpl(el, ctx)).filter(Boolean);
+
+  const body: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const offsetXDots = i * (labelWidthDots + gapDots);
+    for (const el of sorted) {
+      const zpl = generateElementZpl(el, ctx, offsetXDots);
+      if (zpl) body.push(zpl);
+    }
+  }
 
   const parts: string[] = [];
   parts.push('^XA');

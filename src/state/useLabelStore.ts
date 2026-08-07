@@ -57,6 +57,8 @@ const DEFAULT_LABEL_SETTINGS: LabelSettings = {
   widthMm: 100,
   heightMm: 150,
   dpi: 203,
+  labelsAcross: 1,
+  horizontalGapMm: 0,
 };
 
 export const useLabelStore = create<LabelStore>((set, get) => ({
