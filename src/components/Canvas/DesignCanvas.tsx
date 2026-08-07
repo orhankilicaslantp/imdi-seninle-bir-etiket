@@ -30,6 +30,7 @@ export default function DesignCanvas({ pxPerMm, bitmaps }: Props) {
               size={{ width: el.width * pxPerMm, height: el.height * pxPerMm }}
               position={{ x: el.x * pxPerMm, y: el.y * pxPerMm }}
               bounds="parent"
+              lockAspectRatio={el.type === 'image' && el.lockAspectRatio ? el.width / el.height : false}
               onDragStart={() => select(el.id)}
               onDragStop={(_, d) => {
                 updateElement(el.id, { x: d.x / pxPerMm, y: d.y / pxPerMm });

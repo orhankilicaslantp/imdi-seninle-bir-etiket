@@ -20,7 +20,16 @@ export default function Toolbar() {
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result as string;
-      addElement(createDefaultImage(10, 10, dataUrl));
+      const img = new window.Image();
+      img.onload = () => {
+        const maxSide = 30; // mm
+        const ratio = img.naturalWidth / img.naturalHeight || 1;
+        const width = ratio >= 1 ? maxSide : maxSide * ratio;
+        const height = ratio >= 1 ? maxSide / ratio : maxSide;
+        addElement(createDefaultImage(10, 10, dataUrl, width, height));
+      };
+      img.onerror = () => addElement(createDefaultImage(10, 10, dataUrl));
+      img.src = dataUrl;
     };
     reader.readAsDataURL(file);
     e.target.value = '';

@@ -228,18 +228,25 @@ export function createDefaultShape(x: number, y: number): ShapeElement {
   };
 }
 
-export function createDefaultImage(x: number, y: number, dataUrl: string): ImageElement {
+export function createDefaultImage(
+  x: number,
+  y: number,
+  dataUrl: string,
+  width = 30,
+  height = 30,
+): ImageElement {
   return {
     id: nextId('image'),
     type: 'image',
     x,
     y,
-    width: 30,
-    height: 30,
+    width,
+    height,
     rotation: 0,
     zIndex: 1,
     originalDataUrl: dataUrl,
     threshold: 128,
+    lockAspectRatio: true,
   };
 }
 

@@ -1,6 +1,6 @@
 import { useLabelStore } from '../../state/useLabelStore';
 import type { BarcodeElement, IconElement, ImageElement, QrElement, Rotation, ShapeElement, TextElement } from '../../types';
-import { Trash2, Copy, ArrowUpToLine, ArrowDownToLine } from 'lucide-react';
+import { Trash2, Copy, ArrowUpToLine, ArrowDownToLine, Lock, Unlock } from 'lucide-react';
 
 const BUILTIN_FONTS = ['0', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 
@@ -49,10 +49,38 @@ export default function PropertiesPanel() {
           <input type="number" value={round(el.y)} onChange={(e) => commit({ y: num(e) })} onBlur={() => pushHistory()} className={inputCls} />
         </Field>
         <Field label="Genişlik (mm)">
-          <input type="number" value={round(el.width)} onChange={(e) => commit({ width: num(e) })} onBlur={() => pushHistory()} className={inputCls} />
+          <input
+            type="number"
+            value={round(el.width)}
+            onChange={(e) => {
+              const width = num(e);
+              if (el.type === 'image' && el.lockAspectRatio) {
+                const ratio = el.width / el.height;
+                commit({ width, height: ratio ? width / ratio : el.height });
+              } else {
+                commit({ width });
+              }
+            }}
+            onBlur={() => pushHistory()}
+            className={inputCls}
+          />
         </Field>
         <Field label="Yükseklik (mm)">
-          <input type="number" value={round(el.height)} onChange={(e) => commit({ height: num(e) })} onBlur={() => pushHistory()} className={inputCls} />
+          <input
+            type="number"
+            value={round(el.height)}
+            onChange={(e) => {
+              const height = num(e);
+              if (el.type === 'image' && el.lockAspectRatio) {
+                const ratio = el.width / el.height;
+                commit({ height, width: ratio ? height * ratio : el.width });
+              } else {
+                commit({ height });
+              }
+            }}
+            onBlur={() => pushHistory()}
+            className={inputCls}
+          />
         </Field>
         <Field label="Döndürme">
           <select value={el.rotation} onChange={(e) => commitAndSave({ rotation: parseInt(e.target.value, 10) as Rotation })} className={inputCls}>
@@ -219,6 +247,15 @@ function ImageProps({
   return (
     <div className="flex flex-col gap-2 border-t border-white/10 pt-2">
       <img src={el.originalDataUrl} alt="" className="max-h-24 object-contain bg-white rounded" />
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={el.lockAspectRatio ?? true}
+          onChange={(e) => commitAndSave({ lockAspectRatio: e.target.checked })}
+        />
+        {el.lockAspectRatio ?? true ? <Lock size={12} /> : <Unlock size={12} />}
+        <span>En-Boy Oranını Kilitle</span>
+      </label>
       <Field label={`Eşik Değeri (${el.threshold})`}>
         <input type="range" min={0} max={255} value={el.threshold} onChange={(e) => commit({ threshold: num(e) })} onMouseUp={() => commitAndSave({})} className="w-full" />
       </Field>

@@ -70,6 +70,7 @@ export interface ImageElement extends BaseElement {
   originalDataUrl: string; // önizleme için
   threshold: number; // 0-255 monokrom eşik
   invert?: boolean;
+  lockAspectRatio?: boolean; // en-boy oranı kilitli mi
 }
 
 export interface IconElement extends BaseElement {
