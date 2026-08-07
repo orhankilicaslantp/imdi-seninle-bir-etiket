@@ -11,7 +11,7 @@ import {
 import { useLabelStore, createDefaultText, createDefaultShape, createDefaultImage, createDefaultBarcode, createDefaultQr } from '../../state/useLabelStore';
 
 export default function Toolbar() {
-  const { addElement, undo, redo } = useLabelStore();
+  const { addElement, undo, redo, labelSettings } = useLabelStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -57,7 +57,7 @@ export default function Toolbar() {
         <Barcode size={18} />
         Barkod
       </button>
-      <button className={btnClass} onClick={() => addElement(createDefaultQr(10, 10))}>
+      <button className={btnClass} onClick={() => addElement(createDefaultQr(10, 10, labelSettings.dpi))}>
         <QrCode size={18} />
         QR Kod
       </button>

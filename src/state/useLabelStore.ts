@@ -12,6 +12,7 @@ import type {
   TextElement,
 } from '../types';
 import { MAX_CUSTOM_FONTS } from '../types';
+import { clampMagnification, getQrModuleCount, qrMagnificationFromMm, qrSizeMm } from '../lib/qrSize';
 
 let idCounter = 1;
 export function nextId(prefix: string): string {
@@ -33,7 +34,8 @@ interface LabelStore {
 
   setLabelSettings: (settings: Partial<LabelSettings>) => void;
   addElement: (el: LabelElement) => void;
-  updateElement: (id: string, patch: Partial<LabelElement>) => void;
+  updateElement: (id: string, patch: Partial<LabelElement>, opts?: { skipQrNormalize?: boolean }) => void;
+  finalizeQrSize: (id: string) => void;
   removeElement: (id: string) => void;
   duplicateElement: (id: string) => void;
   select: (id: string | null) => void;
@@ -77,9 +79,28 @@ export const useLabelStore = create<LabelStore>((set, get) => ({
     get().pushHistory();
   },
 
-  updateElement: (id, patch) => {
+  updateElement: (id, patch, opts) => {
     set((s) => ({
-      elements: s.elements.map((e) => (e.id === id ? ({ ...e, ...patch } as LabelElement) : e)),
+      elements: s.elements.map((e) => {
+        if (e.id !== id) return e;
+        const merged = { ...e, ...patch } as LabelElement;
+        if (merged.type === 'qr' && !opts?.skipQrNormalize) {
+          return normalizeQrElement(e as QrElement, merged, s.labelSettings.dpi);
+        }
+        return merged;
+      }),
+    }));
+  },
+
+  finalizeQrSize: (id) => {
+    set((s) => ({
+      elements: s.elements.map((e) => {
+        if (e.id !== id || e.type !== 'qr') return e;
+        const moduleCount = getQrModuleCount(e.data, e.errorCorrection);
+        const mag = qrMagnificationFromMm(e.width, moduleCount, s.labelSettings.dpi);
+        const size = qrSizeMm(moduleCount, mag, s.labelSettings.dpi);
+        return { ...e, magnification: mag, width: size, height: size };
+      }),
     }));
   },
 
@@ -285,18 +306,55 @@ export function createDefaultBarcode(x: number, y: number): BarcodeElement {
   };
 }
 
-export function createDefaultQr(x: number, y: number): QrElement {
+export function createDefaultQr(x: number, y: number, dpi = 203): QrElement {
+  const data = 'https://example.com';
+  const errorCorrection = 'Q';
+  const magnification = 4;
+  const moduleCount = getQrModuleCount(data, errorCorrection);
+  const size = qrSizeMm(moduleCount, magnification, dpi);
   return {
     id: nextId('qr'),
     type: 'qr',
     x,
     y,
-    width: 20,
-    height: 20,
+    width: size,
+    height: size,
     rotation: 0,
     zIndex: 1,
-    data: 'https://example.com',
-    magnification: 4,
-    errorCorrection: 'Q',
+    data,
+    magnification,
+    errorCorrection,
   };
+}
+
+/**
+ * QR kodunda gerçek boyut = modül sayısı (veri+hata düzeltmesine bağlı) x büyütme (magnification).
+ * Bu yüzden genişlik/yükseklik alanları veya sürükle-boyutlandırma ile serbestçe değiştirilemez;
+ * her değişiklik en yakın geçerli büyütme (1-10) değerine kilitlenip kare (width=height) olarak
+ * yeniden hesaplanır -- böylece tasarım kutusu her zaman gerçek ZPL çıktısıyla eşleşir.
+ */
+function normalizeQrElement(original: QrElement, merged: QrElement, dpi: number): QrElement {
+  const moduleCount = getQrModuleCount(merged.data, merged.errorCorrection);
+  const magChanged = merged.magnification !== original.magnification;
+  const widthChanged = merged.width !== original.width;
+  const heightChanged = merged.height !== original.height;
+
+  if (magChanged) {
+    const mag = clampMagnification(merged.magnification);
+    const size = qrSizeMm(moduleCount, mag, dpi);
+    return { ...merged, magnification: mag, width: size, height: size };
+  }
+  if (widthChanged || heightChanged) {
+    const targetMm = widthChanged ? merged.width : merged.height;
+    const mag = qrMagnificationFromMm(targetMm, moduleCount, dpi);
+    const size = qrSizeMm(moduleCount, mag, dpi);
+    return { ...merged, magnification: mag, width: size, height: size };
+  }
+  // Veri veya hata düzeltme seviyesi değişmiş olabilir (modül sayısı etkilenir);
+  // büyütmeyi sabit tutup kutu boyutunu gerçek boyuta yeniden senkronize et.
+  const size = qrSizeMm(moduleCount, merged.magnification, dpi);
+  if (Math.abs(size - merged.width) > 0.01 || Math.abs(size - merged.height) > 0.01) {
+    return { ...merged, width: size, height: size };
+  }
+  return merged;
 }

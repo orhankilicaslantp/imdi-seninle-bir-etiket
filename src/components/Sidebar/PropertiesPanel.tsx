@@ -6,16 +6,26 @@ import { BARCODE_SYMBOLOGIES, CATEGORY_LABELS, getBarcodeMeta } from '../../lib/
 const BUILTIN_FONTS = ['0', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 
 export default function PropertiesPanel() {
-  const { elements, selectedId, updateElement, removeElement, duplicateElement, bringToFront, sendToBack, customFonts, pushHistory } =
-    useLabelStore();
+  const {
+    elements,
+    selectedId,
+    updateElement,
+    finalizeQrSize,
+    removeElement,
+    duplicateElement,
+    bringToFront,
+    sendToBack,
+    customFonts,
+    pushHistory,
+  } = useLabelStore();
   const el = elements.find((e) => e.id === selectedId);
 
   if (!el) {
     return <div className="p-4 text-sm text-gray-500">Düzenlemek için bir eleman seçin.</div>;
   }
 
-  const commit = (patch: Record<string, unknown>) => {
-    updateElement(el.id, patch);
+  const commit = (patch: Record<string, unknown>, opts?: { skipQrNormalize?: boolean }) => {
+    updateElement(el.id, patch, opts);
   };
   const commitAndSave = (patch: Record<string, unknown>) => {
     updateElement(el.id, patch);
@@ -58,11 +68,19 @@ export default function PropertiesPanel() {
               if (el.type === 'image' && el.lockAspectRatio) {
                 const ratio = el.width / el.height;
                 commit({ width, height: ratio ? width / ratio : el.height });
+              } else if (el.type === 'qr') {
+                // QR gerçek boyutu modül sayısı x büyütme ile sabitlenir; yazarken
+                // her tuş vuruşunda anlık kilitleme yapmayıp sadece onBlur'da en yakın
+                // geçerli büyütmeye (1-10) kilitliyoruz.
+                commit({ width, height: width }, { skipQrNormalize: true });
               } else {
                 commit({ width });
               }
             }}
-            onBlur={() => pushHistory()}
+            onBlur={() => {
+              if (el.type === 'qr') finalizeQrSize(el.id);
+              pushHistory();
+            }}
             className={inputCls}
           />
         </Field>
@@ -75,11 +93,16 @@ export default function PropertiesPanel() {
               if (el.type === 'image' && el.lockAspectRatio) {
                 const ratio = el.width / el.height;
                 commit({ height, width: ratio ? height * ratio : el.width });
+              } else if (el.type === 'qr') {
+                commit({ width: height, height }, { skipQrNormalize: true });
               } else {
                 commit({ height });
               }
             }}
-            onBlur={() => pushHistory()}
+            onBlur={() => {
+              if (el.type === 'qr') finalizeQrSize(el.id);
+              pushHistory();
+            }}
             className={inputCls}
           />
         </Field>
