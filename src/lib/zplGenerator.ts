@@ -10,7 +10,7 @@ import type {
   TextElement,
 } from '../types';
 import { mmToDots } from './units';
-import { generateFontDownloadZpl, generateFontRefZpl } from './fontToZpl';
+import { generateFontRefZpl } from './fontToZpl';
 import { monoBitmapToGfCommand, type MonoBitmap } from './imageToZpl';
 
 export interface GeneratorContext {
@@ -147,14 +147,8 @@ export function generateLabelZpl(elements: LabelElement[], ctx: GeneratorContext
   const pw = mmToDots(widthMm, dpi);
   const ll = mmToDots(heightMm, dpi);
 
-  const usedFontIds = new Set<string>();
-  for (const el of elements) {
-    if (el.type === 'text' && el.isCustomFont) usedFontIds.add(el.fontRef);
-  }
-  const fontDownloads = ctx.customFonts
-    .filter((f) => usedFontIds.has(f.id))
-    .map((f) => generateFontDownloadZpl(f));
-
+  // Not: Özel fontlar burada indirilmez (~DY üretilmez). Fontların yazıcı belleğine
+  // önceden yüklendiği kabul edilir; ZPL'de sadece ^A@ ile bellek adına referans verilir.
   const sorted = [...elements].sort((a, b) => a.zIndex - b.zIndex);
   const body = sorted.map((el) => generateElementZpl(el, ctx)).filter(Boolean);
 
@@ -163,7 +157,6 @@ export function generateLabelZpl(elements: LabelElement[], ctx: GeneratorContext
   parts.push('^CI28');
   parts.push(`^PW${pw}`);
   parts.push(`^LL${ll}`);
-  for (const fd of fontDownloads) parts.push(fd);
   for (const b of body) parts.push(b);
   parts.push('^XZ');
   return parts.join('\n');

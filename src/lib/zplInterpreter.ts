@@ -208,22 +208,14 @@ export async function renderZplToCanvas(
   ctx.fillStyle = '#000000';
   ctx.strokeStyle = '#000000';
 
-  // ~DY font indirmelerini önceden yükle (async FontFace kaydı)
+  // Not: Font verisi ZPL'e gömülmez (~DY üretilmez), yazıcıya ayrıca yüklendiği kabul edilir.
+  // Önizlemede doğru görünmesi için uygulamada yüklü CustomFont kaydından bellek adına göre eşleştirip yüklüyoruz.
   const downloadedLocators = new Map<string, CustomFont>();
-  const dyRegex = /~DY([A-Z]):([^,]+),([A-Z]),([A-Z]),(\d+),,([0-9A-Fa-f]*)/g;
-  let dyMatch: RegExpExecArray | null;
-  while ((dyMatch = dyRegex.exec(zpl))) {
-    const [, drive, filename] = dyMatch;
-    const matchByName = customFonts.find(
-      (f) => f.targetName === filename && f.drive === drive,
-    ) || customFonts.find((f) => f.targetName === filename);
-    if (matchByName) {
-      await ensureFontFaceLoaded(matchByName);
-      downloadedLocators.set(filename, matchByName);
-      downloadedLocators.set(`${drive}:${filename}`, matchByName);
-    } else {
-      warnings.push(`Font verisi bulunamadı: ${filename} (bu oturumda yüklenmemiş olabilir)`);
-    }
+  for (const font of customFonts) {
+    if (font.fileType === 'FNT') continue;
+    await ensureFontFaceLoaded(font);
+    downloadedLocators.set(font.targetName, font);
+    downloadedLocators.set(`${font.drive}:${font.targetName}`, font);
   }
 
   const tokens = zpl.split(/(?=[\^~])/).filter((t) => t.trim().length > 0);
@@ -234,7 +226,7 @@ export async function renderZplToCanvas(
     if (token.startsWith('^XA') || token.startsWith('^XZ')) continue;
     if (token.startsWith('^CI')) continue;
     if (token.startsWith('^PW') || token.startsWith('^LL')) continue;
-    if (token.startsWith('~DY')) continue; // yukarıda önceden işlendi
+    if (token.startsWith('~DY')) continue; // artık üretilmiyor ama Kod Modu'nda elle yazılmışsa yoksayılır
 
     if (token.startsWith('^FO') || token.startsWith('^FT')) {
       const params = token.slice(3).split(',');
