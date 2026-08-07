@@ -17,6 +17,7 @@ export interface LabelPreset {
 }
 
 export const LABEL_PRESETS: LabelPreset[] = [
+  { name: '100 x 100 mm', widthMm: 100, heightMm: 100 },
   { name: '100 x 150 mm (4x6in Kargo)', widthMm: 100, heightMm: 150 },
   { name: '58 x 40 mm (Ürün Etiketi)', widthMm: 58, heightMm: 40 },
   { name: '101.6 x 50.8 mm (4x2in)', widthMm: 101.6, heightMm: 50.8 },
