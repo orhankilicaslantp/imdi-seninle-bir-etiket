@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileDown, FilePlus, FolderOpen, Tag } from 'lucide-react';
 import { useLabelStore } from './state/useLabelStore';
 import { useBitmaps } from './state/useBitmaps';
@@ -11,13 +11,27 @@ import FontManagerPanel from './components/Sidebar/FontManagerPanel';
 import ZplCodeView from './components/Preview/ZplCodeView';
 import ZplPreviewCanvas from './components/Preview/ZplPreviewCanvas';
 import { generateLabelZpl } from './lib/zplGenerator';
+import { ensureFontFaceLoaded } from './lib/zplInterpreter';
+import { loadBundledDefaultFont, DEFAULT_FONT_ID } from './lib/defaultFonts';
+import { MAX_CUSTOM_FONTS } from './types';
 import type { ProjectFile } from './types';
+
+async function ensureDefaultFont() {
+  const state = useLabelStore.getState();
+  if (state.customFonts.some((f) => f.id === DEFAULT_FONT_ID)) return;
+  if (state.customFonts.length >= MAX_CUSTOM_FONTS) return;
+  const font = await loadBundledDefaultFont();
+  if (!font) return;
+  const result = state.addCustomFont(font);
+  if (result.ok) await ensureFontFaceLoaded(font);
+}
 
 type RightTab = 'properties' | 'code' | 'preview';
 type LeftTab = 'elements' | 'icons' | 'fonts';
 
 function App() {
-  const { labelSettings, elements, customFonts, loadProject, exportProject, resetProject } = useLabelStore();
+  const { labelSettings, elements, customFonts, removeElement, loadProject, exportProject, resetProject } =
+    useLabelStore();
   const bitmaps = useBitmaps(elements, labelSettings.dpi);
   const [rightTab, setRightTab] = useState<RightTab>('properties');
   const [leftTab, setLeftTab] = useState<LeftTab>('elements');
@@ -32,10 +46,38 @@ function App() {
 
   const activeZpl = manualZpl ?? generatedZpl;
 
+  // Uygulama açılışında standart (bundle edilmiş) özel fontu font listesine ekle
+  useEffect(() => {
+    ensureDefaultFont();
+  }, []);
+
+  // Del / Backspace ile seçili elemanı sil (bir input/textarea alanında yazı yazılırken devre dışı)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const target = e.target as HTMLElement | null;
+      const isEditableTarget =
+        !!target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable);
+      if (isEditableTarget) return;
+      const currentSelectedId = useLabelStore.getState().selectedId;
+      if (currentSelectedId) {
+        e.preventDefault();
+        removeElement(currentSelectedId);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [removeElement]);
+
   const handleNew = () => {
     if (confirm('Yeni bir tasarıma başlanacak, mevcut çalışma kaybolacak. Onaylıyor musunuz?')) {
       resetProject();
       setManualZpl(null);
+      ensureDefaultFont();
     }
   };
 

@@ -22,7 +22,7 @@ export default function Toolbar() {
       const dataUrl = reader.result as string;
       const img = new window.Image();
       img.onload = () => {
-        const maxSide = 30; // mm
+        const maxSide = 100; // mm - standart varsayılan boyut
         const ratio = img.naturalWidth / img.naturalHeight || 1;
         const width = ratio >= 1 ? maxSide : maxSide * ratio;
         const height = ratio >= 1 ? maxSide / ratio : maxSide;

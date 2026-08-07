@@ -232,8 +232,8 @@ export function createDefaultImage(
   x: number,
   y: number,
   dataUrl: string,
-  width = 30,
-  height = 30,
+  width = 100,
+  height = 100,
 ): ImageElement {
   return {
     id: nextId('image'),

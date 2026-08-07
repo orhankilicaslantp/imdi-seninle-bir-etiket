@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Upload, Trash2, AlertTriangle } from 'lucide-react';
 import { useLabelStore, nextId } from '../../state/useLabelStore';
 import type { CustomFont, FontFileType, PrinterDrive } from '../../types';
@@ -95,6 +95,20 @@ function FontRow({
   onRemove: (id: string) => void;
 }) {
   const familyName = getFontFamilyName(font.id);
+  const [, forceRerender] = useState(0);
+
+  useEffect(() => {
+    if (font.fileType === 'FNT' || familyName) return;
+    let cancelled = false;
+    ensureFontFaceLoaded(font).then(() => {
+      if (!cancelled) forceRerender((n) => n + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [font.id, font.fileType, familyName]);
+
   return (
     <div className="bg-white/5 rounded-md p-2 flex flex-col gap-2 text-xs">
       <div className="flex items-center justify-between">
