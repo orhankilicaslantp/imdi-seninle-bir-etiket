@@ -83,7 +83,36 @@ export interface IconElement extends BaseElement {
   invert?: boolean;
 }
 
-export type BarcodeSymbology = 'CODE128' | 'EAN13' | 'EAN8' | 'UPC';
+export type BarcodeSymbology =
+  // 1B - standart
+  | 'CODE128'
+  | 'CODE39'
+  | 'CODE93'
+  | 'EAN13'
+  | 'EAN8'
+  | 'UPC' // UPC-A
+  | 'UPCE'
+  | 'ITF' // Interleaved 2 of 5
+  | 'CODABAR'
+  | 'MSI'
+  // 1B - endüstriyel / özel
+  | 'CODE11'
+  | 'STANDARD2OF5'
+  | 'INDUSTRIAL2OF5'
+  | 'PLANET'
+  | 'LOGMARS'
+  | 'PLESSEY'
+  | 'POSTAL'
+  // 2B (barkodun kendisi yazıcı tarafından üretilir, önizleme yaklaşık/placeholder)
+  | 'PDF417'
+  | 'DATAMATRIX'
+  | 'AZTEC'
+  | 'MAXICODE'
+  | 'GS1DATABAR'
+  | 'CODABLOCK'
+  | 'MICROPDF417'
+  | 'CODE49'
+  | 'TLC39';
 
 export interface BarcodeElement extends BaseElement {
   type: 'barcode';

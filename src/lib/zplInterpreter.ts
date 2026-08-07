@@ -2,6 +2,7 @@ import JsBarcode from 'jsbarcode';
 import QRCode from 'qrcode';
 import type { CustomFont, Dpi } from '../types';
 import { base64ToBytes } from './fontToZpl';
+import { getBarcodeMeta, drawPlaceholderBarcode, ZPL_CODE_TO_SYMBOLOGY } from './barcodeSymbologies';
 
 export interface InterpretResult {
   warnings: string[];
@@ -19,7 +20,7 @@ interface FieldState {
   byRatio: number;
   byHeight: number;
   pendingShape: { w: number; h: number; thickness: number; color: 'B' | 'W'; rounding: number } | null;
-  pendingBarcodeCmd: { type: 'BC' | 'BE' | 'B8' | 'BU'; params: string[] } | null;
+  pendingBarcodeCmd: { code: string; params: string[] } | null;
   pendingQrCmd: { orientation: string; magnification: number } | null;
   pendingGf: string | null; // raw ^GF... token param string
   hexEscape: boolean;
@@ -131,28 +132,34 @@ function drawBarcode(
   warnings: string[],
 ): void {
   if (!field.pendingBarcodeCmd) return;
-  const formatMap: Record<string, string> = {
-    BC: 'CODE128',
-    BE: 'EAN13',
-    B8: 'EAN8',
-    BU: 'UPC',
-  };
-  const format = formatMap[field.pendingBarcodeCmd.type];
-  const showText = field.pendingBarcodeCmd.params[1] === 'Y';
-  const off = document.createElement('canvas');
-  try {
-    JsBarcode(off, data, {
-      format,
-      width: field.byModuleWidth,
-      height: field.byHeight,
-      displayValue: showText,
-      margin: 0,
-      fontSize: 14,
-    });
-    ctx.drawImage(off, x, y);
-  } catch {
-    warnings.push(`Barkod render edilemedi: ${data}`);
+  const symbology = ZPL_CODE_TO_SYMBOLOGY[field.pendingBarcodeCmd.code];
+  const meta = symbology ? getBarcodeMeta(symbology) : null;
+  if (meta && meta.previewable && meta.jsBarcodeFormat) {
+    const idx = meta.showTextParamIndex;
+    const showText = idx != null ? field.pendingBarcodeCmd.params[idx] === 'Y' : false;
+    const off = document.createElement('canvas');
+    try {
+      JsBarcode(off, data, {
+        format: meta.jsBarcodeFormat,
+        width: field.byModuleWidth,
+        height: field.byHeight,
+        displayValue: showText,
+        margin: 0,
+        fontSize: 14,
+      });
+      ctx.drawImage(off, x, y);
+      return;
+    } catch {
+      warnings.push(`Barkod render edilemedi: ${data}`);
+      return;
+    }
   }
+  // Önizlenemeyen tür (2B veya niş 1B): yer tutucu kutu çiz, ZPL çıkışı yine de doğru üretilir.
+  const label = meta ? meta.label : field.pendingBarcodeCmd.code;
+  const w = Math.max(60, data.length * Math.max(1, field.byModuleWidth) * 11);
+  const h = Math.max(30, field.byHeight);
+  drawPlaceholderBarcode(ctx, x, y, w, h, label, data);
+  warnings.push(`${label} barkodu bu önizlemede yaklaşık gösteriliyor (desen yazıcı tarafından üretilir).`);
 }
 
 function drawQr(
@@ -263,20 +270,21 @@ export async function renderZplToCanvas(
       continue;
     }
 
-    if (token.startsWith('^BC') || token.startsWith('^BE') || token.startsWith('^B8') || token.startsWith('^BU')) {
-      const type = token.slice(1, 3) as 'BC' | 'BE' | 'B8' | 'BU';
-      const params = token.slice(3).split(',');
-      if (params[1]) field.byHeight = parseFloat(params[1]) || field.byHeight;
-      field.pendingBarcodeCmd = { type, params };
-      continue;
-    }
-
     if (token.startsWith('^BQ')) {
       const params = token.slice(3).split(',');
       field.pendingQrCmd = {
         orientation: params[0] || 'N',
         magnification: parseFloat(params[2]) || 4,
       };
+      continue;
+    }
+
+    if (/^\^B[0-9A-Z]/.test(token) && !token.startsWith('^BY')) {
+      const code = token.slice(1, 3);
+      const params = token.slice(3).split(',');
+      // Yükseklik ^BY komutundan (byHeight) zaten doğru şekilde alınıyor; barkoda özgü
+      // parametre sırası sembolojiye göre değiştiği için burada tekrar ayrıştırılmıyor.
+      field.pendingBarcodeCmd = { code, params };
       continue;
     }
 

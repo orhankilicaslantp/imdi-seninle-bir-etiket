@@ -12,6 +12,7 @@ import type {
 import { mmToDots } from './units';
 import { generateFontRefZpl } from './fontToZpl';
 import { monoBitmapToGfCommand, type MonoBitmap } from './imageToZpl';
+import { getBarcodeMeta } from './barcodeSymbologies';
 
 export interface GeneratorContext {
   labelSettings: LabelSettings;
@@ -97,23 +98,8 @@ function genBarcode(el: BarcodeElement, ctx: GeneratorContext, offsetXDots: numb
   const y = mmToDots(el.y, dpi);
   const h = mmToDots(el.height, dpi);
   const orientation = rotationToOrientation(el.rotation);
-  const showText = el.showText ? 'Y' : 'N';
   const by = `^BY${el.moduleWidth},${el.ratio},${h}`;
-  let barcodeCmd = '';
-  switch (el.symbology) {
-    case 'CODE128':
-      barcodeCmd = `^BC${orientation},${h},${showText},N,N,A`;
-      break;
-    case 'EAN13':
-      barcodeCmd = `^BE${orientation},${h},${showText},N`;
-      break;
-    case 'EAN8':
-      barcodeCmd = `^B8${orientation},${h},${showText},N`;
-      break;
-    case 'UPC':
-      barcodeCmd = `^BU${orientation},${h},${showText},N,Y`;
-      break;
-  }
+  const barcodeCmd = getBarcodeMeta(el.symbology).buildZpl(orientation, h, el.showText);
   return `^FO${x},${y}${by}${barcodeCmd}^FD${escapeFieldData(el.data)}^FS`;
 }
 

@@ -1,6 +1,7 @@
 import { useLabelStore } from '../../state/useLabelStore';
 import type { BarcodeElement, IconElement, ImageElement, QrElement, Rotation, ShapeElement, TextElement } from '../../types';
 import { Trash2, Copy, ArrowUpToLine, ArrowDownToLine, Lock, Unlock } from 'lucide-react';
+import { BARCODE_SYMBOLOGIES, CATEGORY_LABELS, getBarcodeMeta } from '../../lib/barcodeSymbologies';
 
 const BUILTIN_FONTS = ['0', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 
@@ -298,16 +299,27 @@ function BarcodeProps({
   commit: (p: Record<string, unknown>) => void;
   commitAndSave: (p: Record<string, unknown>) => void;
 }) {
+  const meta = getBarcodeMeta(el.symbology);
   return (
     <div className="flex flex-col gap-2 border-t border-white/10 pt-2">
       <Field label="Barkod Türü">
         <select value={el.symbology} onChange={(e) => commitAndSave({ symbology: e.target.value })} className={inputCls}>
-          <option value="CODE128">Code 128</option>
-          <option value="EAN13">EAN-13</option>
-          <option value="EAN8">EAN-8</option>
-          <option value="UPC">UPC-A</option>
+          {(['1d-standart', '1d-endustriyel', '2d'] as const).map((cat) => (
+            <optgroup key={cat} label={CATEGORY_LABELS[cat]}>
+              {BARCODE_SYMBOLOGIES.filter((m) => m.category === cat).map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </optgroup>
+          ))}
         </select>
       </Field>
+      {!meta.previewable && (
+        <p className="text-[11px] text-amber-400">
+          Bu barkod türünün deseni yazıcı tarafından üretilir; burada yaklaşık bir önizleme gösterilir, ZPL çıktısı doğru üretilir.
+        </p>
+      )}
       <Field label="Veri">
         <input value={el.data} onChange={(e) => commit({ data: e.target.value })} onBlur={() => commitAndSave({})} className={inputCls} />
       </Field>
@@ -319,10 +331,12 @@ function BarcodeProps({
           <input type="number" value={el.ratio} onChange={(e) => commit({ ratio: num(e) })} onBlur={() => commitAndSave({})} className={inputCls} />
         </Field>
       </div>
-      <label className="flex items-center gap-2">
-        <input type="checkbox" checked={el.showText} onChange={(e) => commitAndSave({ showText: e.target.checked })} />
-        <span>Okunabilir Metni Göster</span>
-      </label>
+      {meta.supportsShowText && (
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={el.showText} onChange={(e) => commitAndSave({ showText: e.target.checked })} />
+          <span>Okunabilir Metni Göster</span>
+        </label>
+      )}
     </div>
   );
 }
