@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FileDown, FilePlus, FolderOpen, Tag } from 'lucide-react';
+import { FileDown, FilePlus, FolderOpen, Tag, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import { useLabelStore } from './state/useLabelStore';
 import { useBitmaps } from './state/useBitmaps';
 import Toolbar from './components/Toolbar/Toolbar';
@@ -9,7 +9,6 @@ import PropertiesPanel from './components/Sidebar/PropertiesPanel';
 import IconLibraryPanel from './components/Sidebar/IconLibraryPanel';
 import FontManagerPanel from './components/Sidebar/FontManagerPanel';
 import ZplCodeView from './components/Preview/ZplCodeView';
-import ZplPreviewCanvas from './components/Preview/ZplPreviewCanvas';
 import { generateLabelZpl } from './lib/zplGenerator';
 import { ensureFontFaceLoaded } from './lib/zplInterpreter';
 import { loadBundledDefaultFont, DEFAULT_FONT_ID } from './lib/defaultFonts';
@@ -28,7 +27,11 @@ async function ensureDefaultFont() {
 
 type RightTab = 'properties' | 'code';
 type LeftTab = 'elements' | 'icons' | 'fonts';
-type CenterTab = 'design' | 'preview';
+
+const BASE_PX_PER_MM = 3.5;
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 4;
+const ZOOM_STEP = 0.25;
 
 function App() {
   const { labelSettings, elements, customFonts, removeSelected, loadProject, exportProject, resetProject } =
@@ -36,10 +39,20 @@ function App() {
   const bitmaps = useBitmaps(elements, labelSettings.dpi);
   const [rightTab, setRightTab] = useState<RightTab>('properties');
   const [leftTab, setLeftTab] = useState<LeftTab>('elements');
-  const [centerTab, setCenterTab] = useState<CenterTab>('design');
   const [manualZpl, setManualZpl] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const pxPerMm = 3.5;
+  const pxPerMm = BASE_PX_PER_MM * zoom;
+
+  const clampZoom = (z: number) => Math.round(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z)) * 100) / 100;
+  const zoomIn = () => setZoom((z) => clampZoom(z + ZOOM_STEP));
+  const zoomOut = () => setZoom((z) => clampZoom(z - ZOOM_STEP));
+  const resetZoom = () => setZoom(1);
+  const handleCanvasWheel = (e: React.WheelEvent) => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    setZoom((z) => clampZoom(z + (e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP)));
+  };
 
   const generatedZpl = useMemo(
     () => generateLabelZpl(elements, { labelSettings, customFonts, bitmaps }),
@@ -172,23 +185,27 @@ function App() {
         </aside>
 
         <main className="flex-1 min-w-0 flex flex-col min-h-0 bg-[#0f1115]">
-          <div className="flex items-center gap-1 px-2 py-1.5 border-b border-white/10 bg-[#15171c]">
-            <CenterTabButton active={centerTab === 'design'} onClick={() => setCenterTab('design')} label="Tasarım" />
-            <CenterTabButton active={centerTab === 'preview'} onClick={() => setCenterTab('preview')} label="Önizleme" />
+          <Toolbar />
+          <LabelSettingsPanel />
+          <div className="flex items-center gap-2 px-2 py-1.5 border-b border-white/10 bg-[#15171c] text-xs text-gray-300">
+            <button onClick={zoomOut} className="p-1.5 bg-white/10 rounded hover:bg-white/20" title="Uzaklaştır">
+              <ZoomOut size={14} />
+            </button>
+            <span className="w-12 text-center select-none">{Math.round(zoom * 100)}%</span>
+            <button onClick={zoomIn} className="p-1.5 bg-white/10 rounded hover:bg-white/20" title="Yakınlaştır">
+              <ZoomIn size={14} />
+            </button>
+            <button onClick={resetZoom} className="p-1.5 bg-white/10 rounded hover:bg-white/20" title="Sıfırla (%100)">
+              <RotateCcw size={14} />
+            </button>
+            <span className="text-gray-500">Ctrl/Cmd + scroll ile de yakınlaştırabilirsiniz — bu görünüm, gerçek baskının aynısıdır.</span>
           </div>
-          {centerTab === 'design' ? (
-            <>
-              <Toolbar />
-              <LabelSettingsPanel />
-              <div className="flex-1 overflow-auto flex items-start justify-center p-6">
-                <DesignCanvas pxPerMm={pxPerMm} bitmaps={bitmaps} />
-              </div>
-            </>
-          ) : (
-            <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
-              <ZplPreviewCanvas zpl={activeZpl} dpi={labelSettings.dpi} customFonts={customFonts} />
-            </div>
-          )}
+          <div
+            className="flex-1 overflow-auto flex items-start justify-center p-6"
+            onWheel={handleCanvasWheel}
+          >
+            <DesignCanvas pxPerMm={pxPerMm} zpl={activeZpl} dpi={labelSettings.dpi} customFonts={customFonts} />
+          </div>
         </main>
 
         <aside className="w-[420px] shrink-0 bg-[#15171c] border-l border-white/10 flex flex-col min-h-0">
@@ -247,19 +264,6 @@ function LeftTabButton({ active, onClick, label }: { active: boolean; onClick: (
     <button
       onClick={onClick}
       className={`flex-1 text-xs py-2 ${active ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-gray-400 hover:text-gray-200'}`}
-    >
-      {label}
-    </button>
-  );
-}
-
-function CenterTabButton({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`px-3 py-1.5 rounded-md text-xs font-medium ${
-        active ? 'bg-indigo-500/20 text-indigo-300' : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
-      }`}
     >
       {label}
     </button>

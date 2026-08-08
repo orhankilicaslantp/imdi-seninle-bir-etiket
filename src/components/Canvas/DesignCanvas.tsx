@@ -1,19 +1,23 @@
-import { useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { Rnd } from 'react-rnd';
+import { AlertTriangle } from 'lucide-react';
 import { useLabelStore } from '../../state/useLabelStore';
-import type { MonoBitmap } from '../../lib/imageToZpl';
-import type { LabelElement } from '../../types';
+import type { LabelElement, CustomFont, Dpi } from '../../types';
 import { computeSnap, type SnapGuides } from '../../lib/snapping';
-import ElementRenderer from './ElementRenderer';
+import { renderZplToCanvas } from '../../lib/zplInterpreter';
 
 interface Props {
   pxPerMm: number;
-  bitmaps: Record<string, MonoBitmap>;
+  zpl: string;
+  dpi: Dpi;
+  customFonts: CustomFont[];
 }
 
 const SNAP_THRESHOLD_PX = 6;
+const RENDER_SUPERSAMPLE = 2;
+const RENDER_DEBOUNCE_MS = 16;
 
-export default function DesignCanvas({ pxPerMm, bitmaps }: Props) {
+export default function DesignCanvas({ pxPerMm, zpl, dpi, customFonts }: Props) {
   const {
     labelSettings,
     elements,
@@ -31,8 +35,28 @@ export default function DesignCanvas({ pxPerMm, bitmaps }: Props) {
   const heightPx = labelSettings.heightMm * pxPerMm;
   const gapPx = (labelSettings.horizontalGapMm || 0) * pxPerMm;
   const copiesCount = Math.max(1, labelSettings.labelsAcross || 1);
-  const extraCopies = copiesCount - 1;
+  const totalWidthPx = copiesCount * widthPx + (copiesCount - 1) * gapPx;
   const thresholdMm = SNAP_THRESHOLD_PX / pxPerMm;
+
+  // Tasarım alanı, aynı zamanda gerçek ZPL önizlemesidir: elemanlar değiştikçe üretilen ZPL
+  // burada arka plana canlı olarak çizilir (JsBarcode/QRCode/özel font dahil, baskıyla bire bir).
+  const previewCanvasRef = useRef<HTMLCanvasElement>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      const canvas = previewCanvasRef.current;
+      if (!canvas) return;
+      renderZplToCanvas(zpl, canvas, dpi, customFonts, RENDER_SUPERSAMPLE).then((result) => {
+        if (!cancelled) setWarnings(result.warnings);
+      });
+    }, RENDER_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [zpl, dpi, customFonts]);
 
   const [guides, setGuides] = useState<SnapGuides | null>(null);
   // Sürükleme başında grup halindeki elemanların ilk konumlarını (mm) saklar.
@@ -182,10 +206,18 @@ export default function DesignCanvas({ pxPerMm, bitmaps }: Props) {
 
   return (
     <div className="inline-block bg-white/5 p-6 rounded-lg">
-      <div className="flex items-start" style={{ gap: gapPx }}>
+      <div className="relative shadow-2xl" style={{ width: totalWidthPx, height: heightPx }}>
+        {/* Gerçek ZPL önizlemesi: tasarım burada, gerçekte baskıya çıkacak görüntünün aynısıdır. */}
+        <canvas
+          ref={previewCanvasRef}
+          className="absolute top-0 left-0 bg-white"
+          style={{ width: totalWidthPx, height: heightPx, imageRendering: 'pixelated' }}
+        />
+
+        {/* Etkileşim katmanı: sadece ilk (düzenlenebilir) etiket kopyasının üstünde. */}
         <div
           ref={labelRef}
-          className="relative bg-white shadow-2xl"
+          className="absolute top-0 left-0"
           style={{ width: widthPx, height: heightPx }}
           onMouseDown={handleCanvasMouseDown}
         >
@@ -216,14 +248,13 @@ export default function DesignCanvas({ pxPerMm, bitmaps }: Props) {
                   pushHistory();
                 }}
                 style={{
-                  outline: selectedIds.includes(el.id) ? '2px solid #6366f1' : '1px dashed rgba(0,0,0,0.15)',
+                  outline: selectedIds.includes(el.id) ? '2px solid #6366f1' : '1px dashed rgba(99,102,241,0.35)',
+                  background: selectedIds.includes(el.id) ? 'rgba(99,102,241,0.06)' : 'transparent',
                   transform: `rotate(${el.rotation}deg)`,
                   zIndex: el.zIndex,
                 }}
                 onClick={(e: ReactMouseEvent) => handleElementClick(e, el.id)}
-              >
-                <ElementRenderer element={el} bitmap={bitmaps[el.id]} pxPerMm={pxPerMm} />
-              </Rnd>
+              />
             ))}
 
           {guides?.vertical.map((xMm, i) => (
@@ -249,58 +280,26 @@ export default function DesignCanvas({ pxPerMm, bitmaps }: Props) {
           )}
         </div>
 
-        {Array.from({ length: extraCopies }).map((_, copyIndex) => (
-          <GhostLabel
-            key={copyIndex}
-            copyNumber={copyIndex + 2}
-            widthPx={widthPx}
-            heightPx={heightPx}
-            elements={elements}
-            bitmaps={bitmaps}
-            pxPerMm={pxPerMm}
+        {/* Yan yana etiket kopyalarının ayraç çizgileri (gerçek görüntü canvas'ta zaten çiziliyor). */}
+        {Array.from({ length: copiesCount - 1 }).map((_, i) => (
+          <div
+            key={i}
+            className="absolute top-0 bottom-0 pointer-events-none border-l border-dashed border-black/20"
+            style={{ left: (i + 1) * widthPx + i * gapPx + gapPx / 2 }}
           />
         ))}
       </div>
-    </div>
-  );
-}
 
-function GhostLabel({
-  copyNumber,
-  widthPx,
-  heightPx,
-  elements,
-  bitmaps,
-  pxPerMm,
-}: {
-  copyNumber: number;
-  widthPx: number;
-  heightPx: number;
-  elements: LabelElement[];
-  bitmaps: Record<string, MonoBitmap>;
-  pxPerMm: number;
-}) {
-  return (
-    <div className="relative bg-white shadow-2xl opacity-90" style={{ width: widthPx, height: heightPx }}>
-      <div className="absolute -top-5 left-0 text-[10px] text-gray-500">Kopya {copyNumber} (aynı tasarım)</div>
-      {[...elements]
-        .sort((a, b) => a.zIndex - b.zIndex)
-        .map((el) => (
-          <div
-            key={el.id}
-            className="absolute pointer-events-none"
-            style={{
-              left: el.x * pxPerMm,
-              top: el.y * pxPerMm,
-              width: el.width * pxPerMm,
-              height: el.height * pxPerMm,
-              transform: `rotate(${el.rotation}deg)`,
-              zIndex: el.zIndex,
-            }}
-          >
-            <ElementRenderer element={el} bitmap={bitmaps[el.id]} pxPerMm={pxPerMm} />
-          </div>
-        ))}
+      {warnings.length > 0 && (
+        <div className="mt-3 max-w-full">
+          {warnings.map((w, i) => (
+            <div key={i} className="flex items-start gap-2 text-[11px] text-amber-400 py-0.5">
+              <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+              <span>{w}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
