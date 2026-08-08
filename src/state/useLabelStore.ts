@@ -81,6 +81,7 @@ interface LabelStore {
   loadProject: (project: ProjectFile) => void;
   exportProject: () => ProjectFile;
   resetProject: () => void;
+  importFromZpl: (elements: LabelElement[], settings?: Partial<LabelSettings>) => void;
 }
 
 const DEFAULT_LABEL_SETTINGS: LabelSettings = {
@@ -419,6 +420,16 @@ export const useLabelStore = create<LabelStore>((set, get) => ({
       history: [{ elements: [] }],
       historyIndex: 0,
     });
+  },
+
+  importFromZpl: (elements, settings) => {
+    set((s) => ({
+      elements,
+      labelSettings: settings ? { ...s.labelSettings, ...settings } : s.labelSettings,
+      selectedId: null,
+      selectedIds: [],
+    }));
+    get().pushHistory();
   },
 }));
 

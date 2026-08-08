@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FileDown, FilePlus, FolderOpen, Tag, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
+import { FileDown, FilePlus, FolderOpen, Tag, ZoomIn, ZoomOut, RotateCcw, FileUp } from 'lucide-react';
 import { useLabelStore } from './state/useLabelStore';
 import { useBitmaps } from './state/useBitmaps';
 import Toolbar from './components/Toolbar/Toolbar';
@@ -9,6 +9,7 @@ import PropertiesPanel from './components/Sidebar/PropertiesPanel';
 import IconLibraryPanel from './components/Sidebar/IconLibraryPanel';
 import FontManagerPanel from './components/Sidebar/FontManagerPanel';
 import ZplCodeView from './components/Preview/ZplCodeView';
+import ImportZplModal from './components/ImportZplModal';
 import { generateLabelZpl } from './lib/zplGenerator';
 import { ensureFontFaceLoaded } from './lib/zplInterpreter';
 import { loadBundledDefaultFont, DEFAULT_FONT_ID } from './lib/defaultFonts';
@@ -41,6 +42,7 @@ function App() {
   const [leftTab, setLeftTab] = useState<LeftTab>('elements');
   const [manualZpl, setManualZpl] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [showImportModal, setShowImportModal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pxPerMm = BASE_PX_PER_MM * zoom;
 
@@ -160,11 +162,14 @@ function App() {
         </div>
         <div className="flex items-center gap-2">
           <HeaderButton icon={<FilePlus size={14} />} label="Yeni" onClick={handleNew} />
+          <HeaderButton icon={<FileUp size={14} />} label="ZPL Kodu İçe Aktar" onClick={() => setShowImportModal(true)} />
           <HeaderButton icon={<FileDown size={14} />} label="Projeyi Kaydet (.json)" onClick={handleSaveJson} />
           <HeaderButton icon={<FolderOpen size={14} />} label="Projeyi Yükle" onClick={() => fileInputRef.current?.click()} />
           <input ref={fileInputRef} type="file" accept="application/json" className="hidden" onChange={handleLoadJson} />
         </div>
       </header>
+
+      {showImportModal && <ImportZplModal onClose={() => setShowImportModal(false)} />}
 
       <div className="flex flex-1 min-h-0">
         <aside className="w-64 shrink-0 bg-[#15171c] border-r border-white/10 flex flex-col min-h-0">
