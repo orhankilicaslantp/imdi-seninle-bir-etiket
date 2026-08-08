@@ -1,6 +1,8 @@
 // Görsel / ikon -> 1-bit monokrom bitmap -> ZPL ^GFA (ASCII-HEX) dönüşümü
 // ^GF format, dataBytes, totalBytes, rowBytes, data  (format=A => ASCII HEX, dataBytes===totalBytes)
 
+import QRCode from 'qrcode';
+
 export interface MonoBitmap {
   widthPx: number;
   heightPx: number;
@@ -89,6 +91,25 @@ export async function svgStringToMonoBitmap(
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+/** QR verisini istenen piksel boyutuna rasterize edip mono bitmap üretir.
+ * Native ^BQ komutu 1-10 arası büyütme ile sınırlıdır; bu fonksiyon "qrcode" kütüphanesiyle
+ * QR'ı doğrudan istenen piksel genişliğine çizip bitmap olarak gömerek sınırsız büyütme sağlar. */
+export async function qrDataToMonoBitmap(
+  data: string,
+  errorCorrection: 'L' | 'M' | 'Q' | 'H',
+  widthPx: number,
+  heightPx: number,
+): Promise<MonoBitmap> {
+  const canvas = document.createElement('canvas');
+  const size = Math.max(1, Math.round(Math.min(widthPx, heightPx)));
+  await QRCode.toCanvas(canvas, data || ' ', {
+    errorCorrectionLevel: errorCorrection,
+    margin: 0,
+    width: size,
+  });
+  return canvasToMonoBitmap(canvas, 128, false);
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {

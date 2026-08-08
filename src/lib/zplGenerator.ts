@@ -13,6 +13,8 @@ import { mmToDots } from './units';
 import { generateFontRefZpl } from './fontToZpl';
 import { monoBitmapToGfCommand, type MonoBitmap } from './imageToZpl';
 import { getBarcodeMeta } from './barcodeSymbologies';
+import { needsBitmapQr } from './qrSize';
+import { getFontFamilyName } from './zplInterpreter';
 
 export interface GeneratorContext {
   labelSettings: LabelSettings;
@@ -30,26 +32,85 @@ const rotationToOrientation = (rotation: number): 'N' | 'R' | 'I' | 'B' => {
   }
 };
 
+/**
+ * ZPL'de ^FB (Field Block) komutu bir alanın içindeki metni sola/ortaya/sağa yaslamak için
+ * kullanılabilir, ancak verilen genişlik gerçek metin genişliğinden küçük kalırsa satır
+ * kırpılır/kaybolur (maxLines=1 olduğunda taşan karakterler basılmaz). Bu, önizlemede doğru
+ * görünen ama baskıda metnin kaybolmasına yol açan bir soruna sebep oldu; bu yüzden bu sistemde
+ * ^FB HİÇ KULLANILMIYOR. Onun yerine "orta/sağ" hizalama, metnin tahmini piksel genişliği
+ * hesaplanıp ^FO/^FT ile verilen başlangıç konumu (x veya y, döndürme yönüne göre) buna göre
+ * kaydırılarak elde edilir — bu, alanı sınırlamadığı için taşma/kırpma riski taşımaz.
+ */
+let measureCtx: CanvasRenderingContext2D | null = null;
+function getMeasureCtx(): CanvasRenderingContext2D {
+  if (!measureCtx) {
+    measureCtx = document.createElement('canvas').getContext('2d');
+  }
+  return measureCtx as CanvasRenderingContext2D;
+}
+
+function estimateTextWidthDots(text: string, heightDots: number, fontFamily: string): number {
+  const ctx = getMeasureCtx();
+  if (!ctx) return 0;
+  ctx.font = `${Math.max(1, heightDots)}px ${fontFamily}`;
+  return ctx.measureText(text).width;
+}
+
+function alignShiftDots(el: TextElement, textWidthDots: number, widthDots: number): number {
+  if (el.align === 'center') return Math.max(0, (widthDots - textWidthDots) / 2);
+  if (el.align === 'right') return Math.max(0, widthDots - textWidthDots);
+  return 0;
+}
+
+/** Hizalama kaydırmasını döndürme yönüne göre doğru eksene (x veya y) uygular. */
+function applyAlignShift(
+  x: number,
+  y: number,
+  shift: number,
+  orientation: 'N' | 'R' | 'I' | 'B',
+): { x: number; y: number } {
+  switch (orientation) {
+    case 'R': return { x, y: Math.round(y + shift) };
+    case 'I': return { x: Math.round(x - shift), y };
+    case 'B': return { x, y: Math.round(y - shift) };
+    default: return { x: Math.round(x + shift), y };
+  }
+}
+
 function genText(el: TextElement, ctx: GeneratorContext, offsetXDots: number): string {
   const { dpi } = ctx.labelSettings;
-  const x = mmToDots(el.x, dpi) + offsetXDots;
-  const y = mmToDots(el.y, dpi);
   const h = mmToDots(el.fontSize, dpi);
   const w = h; // varsayılan olarak orantılı
+  const widthDots = mmToDots(el.width, dpi);
   const orientation = rotationToOrientation(el.rotation);
   const lines: string[] = [];
 
-  if (el.isCustomFont) {
-    const font = ctx.customFonts.find((f) => f.id === el.fontRef);
-    if (font) {
-      lines.push(`^FT${x},${y}`);
-      lines.push(generateFontRefZpl(font, h, w, orientation));
-      lines.push('^FH\\');
-      lines.push('^CI28');
-      lines.push(`^FD${escapeFieldData(el.text)}^FS`);
-      lines.push('^CI27');
-      return lines.join('');
-    }
+  const font = el.isCustomFont ? ctx.customFonts.find((f) => f.id === el.fontRef) : undefined;
+
+  let fontFamily = 'Arial, sans-serif';
+  if (font) {
+    const family = getFontFamilyName(font.id);
+    if (family) fontFamily = `"${family}"`;
+  }
+
+  let shift = 0;
+  if (el.align !== 'left') {
+    const textWidthDots = estimateTextWidthDots(el.text, h, fontFamily);
+    shift = alignShiftDots(el, textWidthDots, widthDots);
+  }
+
+  const baseX = mmToDots(el.x, dpi) + offsetXDots;
+  const baseY = mmToDots(el.y, dpi);
+  const { x, y } = applyAlignShift(baseX, baseY, shift, orientation);
+
+  if (font) {
+    lines.push(`^FT${x},${y}`);
+    lines.push(generateFontRefZpl(font, h, w, orientation));
+    lines.push('^FH\\');
+    lines.push('^CI28');
+    lines.push(`^FD${escapeFieldData(el.text)}^FS`);
+    lines.push('^CI27');
+    return lines.join('');
   }
 
   lines.push(`^FO${x},${y}`);
@@ -107,8 +168,20 @@ function genQr(el: QrElement, ctx: GeneratorContext, offsetXDots: number): strin
   const { dpi } = ctx.labelSettings;
   const x = mmToDots(el.x, dpi) + offsetXDots;
   const y = mmToDots(el.y, dpi);
+  // Native ^BQ komutu büyütmeyi 1-10 ile sınırlar (yazıcı firmware kısıtı). Bu aralığın
+  // üzerinde istenen boyutlar için QR bir bitmap (^GFA) olarak gömülür; böylece QR kodu
+  // sınırsız şekilde büyütülüp küçültülebilir.
+  if (needsBitmapQr(el.magnification)) {
+    const bmpZpl = genBitmapField(el.id, x, y, ctx);
+    if (bmpZpl) return bmpZpl;
+  }
   const orientation = rotationToOrientation(el.rotation);
-  return `^FO${x},${y}^BQ${orientation},2,${el.magnification}^FD${el.errorCorrection}A,${escapeFieldData(el.data)}^FS`;
+  // Bilinen bir Zebra firmware hatası: daha önce bir barkod alanında (^BY ...,h) kullanılan
+  // "height" parametresi yazıcı belleğinde "sticky" kalır ve sonraki ^BQ (QR) alanının
+  // baskıdaki konumunu aşağı kaydırır (önizlemede bu firmware hatası simüle edilmediği için
+  // fark edilmez). Bunu önlemek için her QR alanından önce ^BY'nin height parametresini 0'a
+  // sıfırlıyoruz -- Zebra'nın resmi önerisi de budur.
+  return `^FO${x},${y}^BY2,3,0^BQ${orientation},2,${el.magnification}^FD${el.errorCorrection}A,${escapeFieldData(el.data)}^FS`;
 }
 
 function escapeFieldData(text: string): string {

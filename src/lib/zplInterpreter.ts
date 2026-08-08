@@ -24,6 +24,7 @@ interface FieldState {
   pendingQrCmd: { orientation: string; magnification: number } | null;
   pendingGf: string | null; // raw ^GF... token param string
   hexEscape: boolean;
+  fieldBlock: { width: number; justification: 'L' | 'C' | 'R' | 'J' } | null;
 }
 
 function freshField(): FieldState {
@@ -43,6 +44,7 @@ function freshField(): FieldState {
     pendingQrCmd: null,
     pendingGf: null,
     hexEscape: false,
+    fieldBlock: null,
   };
 }
 
@@ -179,7 +181,11 @@ function drawQr(
   const errorCorrectionLevel = ecMap[ecLetter] || 'Q';
   const off = document.createElement('canvas');
   try {
-    const moduleSize = Math.max(1, Math.round(field.pendingQrCmd.magnification * 3));
+    // ZPL ^BQ büyütme faktörü (magnification), doğrudan modül başına dot sayısıdır
+    // (bkz. qrSize.ts: qrSizeMm = moduleCount * magnification / dotsPerMm). Burada da
+    // aynı birebir eşleme kullanılmalı, aksi halde önizleme QR'ı gerçek boyuttan büyük
+    // gösterir ve metinlerle aşırı örtüşmeye sebep olur.
+    const moduleSize = Math.max(1, Math.round(field.pendingQrCmd.magnification));
     QRCode.toCanvas(off, data, { errorCorrectionLevel, margin: 0, width: undefined, scale: moduleSize });
     ctx.drawImage(off, x, y);
   } catch {
@@ -219,10 +225,28 @@ export async function renderZplToCanvas(
   // Önizlemede doğru görünmesi için uygulamada yüklü CustomFont kaydından bellek adına göre eşleştirip yüklüyoruz.
   const downloadedLocators = new Map<string, CustomFont>();
   for (const font of customFonts) {
-    if (font.fileType === 'FNT') continue;
-    await ensureFontFaceLoaded(font);
-    downloadedLocators.set(font.targetName, font);
-    downloadedLocators.set(`${font.drive}:${font.targetName}`, font);
+    if (font.fileType !== 'FNT') {
+      await ensureFontFaceLoaded(font);
+    }
+    const target = font.targetName;
+    const addKey = (name: string) => {
+      downloadedLocators.set(name, font);
+      downloadedLocators.set(`${font.drive}:${name}`, font);
+    };
+    addKey(target);
+    // ZPL bellek isimleri gerçek yazıcılarda 8 karakter ada + kısaltılmış uzantıya
+    // sahip olabilir (örn. "21942699.FNT" yazıcıda "21942699.FN" olarak referans
+    // verilebilir). Eşleşmeyi kaçırmamak için uzantının tüm kısaltılmış
+    // varyantlarını (ve uzantısız hâlini) da haritaya ekliyoruz.
+    const dotIdx = target.lastIndexOf('.');
+    if (dotIdx > 0) {
+      const base = target.slice(0, dotIdx);
+      const ext = target.slice(dotIdx + 1);
+      addKey(base);
+      for (let len = 1; len < ext.length; len++) {
+        addKey(`${base}.${ext.slice(0, len)}`);
+      }
+    }
   }
 
   const tokens = zpl.split(/(?=[\^~])/).filter((t) => t.trim().length > 0);
@@ -285,6 +309,15 @@ export async function renderZplToCanvas(
       // Yükseklik ^BY komutundan (byHeight) zaten doğru şekilde alınıyor; barkoda özgü
       // parametre sırası sembolojiye göre değiştiği için burada tekrar ayrıştırılmıyor.
       field.pendingBarcodeCmd = { code, params };
+      continue;
+    }
+
+    if (token.startsWith('^FB')) {
+      const params = token.slice(3).split(',');
+      field.fieldBlock = {
+        width: parseInt(params[0], 10) || 0,
+        justification: (params[3] as 'L' | 'C' | 'R' | 'J') || 'L',
+      };
       continue;
     }
 
@@ -382,6 +415,19 @@ function drawText(
   if (field.fontOrientation === 'R') ctx.rotate(Math.PI / 2);
   if (field.fontOrientation === 'I') ctx.rotate(Math.PI);
   if (field.fontOrientation === 'B') ctx.rotate(-Math.PI / 2);
-  ctx.fillText(data, 0, 0);
+
+  // ^FB (Field Block) alanı içinde metni sola/ortaya/sağa yaslama: gerçek ZPL çıktısıyla
+  // aynı davranışı önizlemede de yansıtmak için metin genişliğini ölçüp ofset uyguluyoruz.
+  let drawX = 0;
+  if (field.fieldBlock && field.fieldBlock.width > 0) {
+    const textWidth = ctx.measureText(data).width;
+    const blockWidth = field.fieldBlock.width;
+    if (field.fieldBlock.justification === 'C') {
+      drawX = Math.max(0, (blockWidth - textWidth) / 2);
+    } else if (field.fieldBlock.justification === 'R') {
+      drawX = Math.max(0, blockWidth - textWidth);
+    }
+  }
+  ctx.fillText(data, drawX, 0);
   ctx.restore();
 }

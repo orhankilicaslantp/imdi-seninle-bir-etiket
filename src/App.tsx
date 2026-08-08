@@ -26,15 +26,17 @@ async function ensureDefaultFont() {
   if (result.ok) await ensureFontFaceLoaded(font);
 }
 
-type RightTab = 'properties' | 'code' | 'preview';
+type RightTab = 'properties' | 'code';
 type LeftTab = 'elements' | 'icons' | 'fonts';
+type CenterTab = 'design' | 'preview';
 
 function App() {
-  const { labelSettings, elements, customFonts, removeElement, loadProject, exportProject, resetProject } =
+  const { labelSettings, elements, customFonts, removeSelected, loadProject, exportProject, resetProject } =
     useLabelStore();
   const bitmaps = useBitmaps(elements, labelSettings.dpi);
   const [rightTab, setRightTab] = useState<RightTab>('properties');
   const [leftTab, setLeftTab] = useState<LeftTab>('elements');
+  const [centerTab, setCenterTab] = useState<CenterTab>('design');
   const [manualZpl, setManualZpl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pxPerMm = 3.5;
@@ -51,10 +53,11 @@ function App() {
     ensureDefaultFont();
   }, []);
 
-  // Del / Backspace ile seçili elemanı sil (bir input/textarea alanında yazı yazılırken devre dışı)
+  // Klavye kısayolları: Del/Backspace ile sil, Ctrl/Cmd+C/V ile kopyala-yapıştır,
+  // Ctrl/Cmd+D ile çoğalt, Ctrl/Cmd+A ile tümünü seç (bir input/textarea alanında
+  // yazı yazılırken devre dışı).
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
       const target = e.target as HTMLElement | null;
       const isEditableTarget =
         !!target &&
@@ -63,15 +66,41 @@ function App() {
           target.tagName === 'SELECT' ||
           target.isContentEditable);
       if (isEditableTarget) return;
-      const currentSelectedId = useLabelStore.getState().selectedId;
-      if (currentSelectedId) {
+
+      const store = useLabelStore.getState();
+      const mod = e.ctrlKey || e.metaKey;
+
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (store.selectedIds.length || store.selectedId) {
+          e.preventDefault();
+          removeSelected();
+        }
+        return;
+      }
+      if (mod && e.key.toLowerCase() === 'c') {
         e.preventDefault();
-        removeElement(currentSelectedId);
+        store.copySelection();
+        return;
+      }
+      if (mod && e.key.toLowerCase() === 'v') {
+        e.preventDefault();
+        store.pasteClipboard();
+        return;
+      }
+      if (mod && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        store.duplicateSelected();
+        return;
+      }
+      if (mod && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        store.selectAll();
+        return;
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [removeElement]);
+  }, [removeSelected]);
 
   const handleNew = () => {
     if (confirm('Yeni bir tasarıma başlanacak, mevcut çalışma kaybolacak. Onaylıyor musunuz?')) {
@@ -125,7 +154,7 @@ function App() {
       </header>
 
       <div className="flex flex-1 min-h-0">
-        <aside className="w-64 bg-[#15171c] border-r border-white/10 flex flex-col min-h-0">
+        <aside className="w-64 shrink-0 bg-[#15171c] border-r border-white/10 flex flex-col min-h-0">
           <div className="flex border-b border-white/10">
             <LeftTabButton active={leftTab === 'elements'} onClick={() => setLeftTab('elements')} label="Eleman" />
             <LeftTabButton active={leftTab === 'icons'} onClick={() => setLeftTab('icons')} label="İkonlar" />
@@ -142,19 +171,30 @@ function App() {
           </div>
         </aside>
 
-        <main className="flex-1 flex flex-col min-h-0 bg-[#0f1115]">
-          <Toolbar />
-          <LabelSettingsPanel />
-          <div className="flex-1 overflow-auto flex items-start justify-center p-6">
-            <DesignCanvas pxPerMm={pxPerMm} bitmaps={bitmaps} />
+        <main className="flex-1 min-w-0 flex flex-col min-h-0 bg-[#0f1115]">
+          <div className="flex items-center gap-1 px-2 py-1.5 border-b border-white/10 bg-[#15171c]">
+            <CenterTabButton active={centerTab === 'design'} onClick={() => setCenterTab('design')} label="Tasarım" />
+            <CenterTabButton active={centerTab === 'preview'} onClick={() => setCenterTab('preview')} label="Önizleme" />
           </div>
+          {centerTab === 'design' ? (
+            <>
+              <Toolbar />
+              <LabelSettingsPanel />
+              <div className="flex-1 overflow-auto flex items-start justify-center p-6">
+                <DesignCanvas pxPerMm={pxPerMm} bitmaps={bitmaps} />
+              </div>
+            </>
+          ) : (
+            <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
+              <ZplPreviewCanvas zpl={activeZpl} dpi={labelSettings.dpi} customFonts={customFonts} />
+            </div>
+          )}
         </main>
 
-        <aside className="w-[420px] bg-[#15171c] border-l border-white/10 flex flex-col min-h-0">
+        <aside className="w-[420px] shrink-0 bg-[#15171c] border-l border-white/10 flex flex-col min-h-0">
           <div className="flex border-b border-white/10">
             <RightTabButton active={rightTab === 'properties'} onClick={() => setRightTab('properties')} label="Özellikler" />
             <RightTabButton active={rightTab === 'code'} onClick={() => setRightTab('code')} label="ZPL Kodu" />
-            <RightTabButton active={rightTab === 'preview'} onClick={() => setRightTab('preview')} label="Önizleme" />
           </div>
           <div className="flex-1 min-h-0">
             {rightTab === 'properties' && <PropertiesPanel />}
@@ -186,9 +226,6 @@ function App() {
                 </div>
               </div>
             )}
-            {rightTab === 'preview' && (
-              <ZplPreviewCanvas zpl={activeZpl} dpi={labelSettings.dpi} customFonts={customFonts} />
-            )}
           </div>
         </aside>
       </div>
@@ -210,6 +247,19 @@ function LeftTabButton({ active, onClick, label }: { active: boolean; onClick: (
     <button
       onClick={onClick}
       className={`flex-1 text-xs py-2 ${active ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-gray-400 hover:text-gray-200'}`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function CenterTabButton({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-3 py-1.5 rounded-md text-xs font-medium ${
+        active ? 'bg-indigo-500/20 text-indigo-300' : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
+      }`}
     >
       {label}
     </button>

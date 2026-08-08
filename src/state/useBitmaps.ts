@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { CustomFont, LabelElement } from '../types';
 import { mmToDots } from '../lib/units';
-import { imageDataUrlToMonoBitmap, svgStringToMonoBitmap, type MonoBitmap } from '../lib/imageToZpl';
+import { imageDataUrlToMonoBitmap, svgStringToMonoBitmap, qrDataToMonoBitmap, type MonoBitmap } from '../lib/imageToZpl';
 import { getIconById } from '../lib/icons/logisticsIcons';
+import { needsBitmapQr } from '../lib/qrSize';
 import type { Dpi } from '../types';
 
 export function useBitmaps(elements: LabelElement[], dpi: Dpi): Record<string, MonoBitmap> {
@@ -43,6 +44,14 @@ export function useBitmaps(elements: LabelElement[], dpi: Dpi): Record<string, M
             } catch {
               // ignore
             }
+          }
+        } else if (el.type === 'qr' && needsBitmapQr(el.magnification)) {
+          const widthPx = mmToDots(el.width, dpi);
+          const heightPx = mmToDots(el.height, dpi);
+          try {
+            result[el.id] = await qrDataToMonoBitmap(el.data, el.errorCorrection, widthPx, heightPx);
+          } catch {
+            // ignore
           }
         }
       }

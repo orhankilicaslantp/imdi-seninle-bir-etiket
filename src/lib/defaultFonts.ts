@@ -19,7 +19,7 @@ export async function loadBundledDefaultFont(): Promise<CustomFont | null> {
       originalFileName: '21942699.TTF',
       fileType: 'TTF',
       drive: 'R',
-      targetName: '21942699.TTF',
+      targetName: '21942699.FNT',
       fileBytesBase64: bytesToBase64(bytes),
     };
   } catch {

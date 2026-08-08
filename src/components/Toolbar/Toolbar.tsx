@@ -53,7 +53,7 @@ export default function Toolbar() {
         Resim
       </button>
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
-      <button className={btnClass} onClick={() => addElement(createDefaultBarcode(10, 10))}>
+      <button className={btnClass} onClick={() => addElement(createDefaultBarcode(10, 10, labelSettings.dpi))}>
         <Barcode size={18} />
         Barkod
       </button>

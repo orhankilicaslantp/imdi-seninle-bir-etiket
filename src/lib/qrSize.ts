@@ -18,9 +18,18 @@ export function getQrModuleCount(data: string, errorCorrection: 'L' | 'M' | 'Q' 
   }
 }
 
+/** ZPL ^BQ komutunun donanımsal (yazıcı firmware) büyütme sınırı. Bunun üzerindeki
+ * boyutlar native ^BQ ile üretilemez; bu durumda QR bir bitmap (^GFA) olarak gömülerek
+ * sınırsız şekilde büyütülüp küçültülebilir. */
+export const MAX_NATIVE_MAGNIFICATION = 10;
+
 export function clampMagnification(mag: number): number {
   if (!Number.isFinite(mag)) return 1;
-  return Math.min(10, Math.max(1, Math.round(mag)));
+  return Math.max(1, Math.round(mag));
+}
+
+export function needsBitmapQr(magnification: number): boolean {
+  return magnification > MAX_NATIVE_MAGNIFICATION;
 }
 
 export function qrSizeMm(moduleCount: number, magnification: number, dpi: number): number {

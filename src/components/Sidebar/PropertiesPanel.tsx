@@ -1,7 +1,24 @@
 import { useLabelStore } from '../../state/useLabelStore';
+import type { AlignMode } from '../../state/useLabelStore';
 import type { BarcodeElement, IconElement, ImageElement, QrElement, Rotation, ShapeElement, TextElement } from '../../types';
-import { Trash2, Copy, ArrowUpToLine, ArrowDownToLine, Lock, Unlock } from 'lucide-react';
+import {
+  Trash2,
+  Copy,
+  ArrowUpToLine,
+  ArrowDownToLine,
+  Lock,
+  Unlock,
+  AlignHorizontalJustifyStart,
+  AlignHorizontalJustifyCenter,
+  AlignHorizontalJustifyEnd,
+  AlignVerticalJustifyStart,
+  AlignVerticalJustifyCenter,
+  AlignVerticalJustifyEnd,
+  AlignHorizontalDistributeCenter,
+  AlignVerticalDistributeCenter,
+} from 'lucide-react';
 import { BARCODE_SYMBOLOGIES, CATEGORY_LABELS, getBarcodeMeta } from '../../lib/barcodeSymbologies';
+import { MIN_MODULE_WIDTH_DOTS, MAX_MODULE_WIDTH_DOTS } from '../../lib/barcodeSize';
 
 const BUILTIN_FONTS = ['0', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 
@@ -9,22 +26,54 @@ export default function PropertiesPanel() {
   const {
     elements,
     selectedId,
+    selectedIds,
     updateElement,
     finalizeQrSize,
+    finalizeBarcodeSize,
     removeElement,
     duplicateElement,
+    removeSelected,
+    duplicateSelected,
+    alignSelected,
     bringToFront,
     sendToBack,
     customFonts,
     pushHistory,
   } = useLabelStore();
   const el = elements.find((e) => e.id === selectedId);
+  const multiSelectCount = selectedIds.length;
+
+  if (multiSelectCount === 0 && !el) {
+    return <div className="p-4 text-sm text-gray-500">Düzenlemek için bir eleman seçin.</div>;
+  }
+
+  if (multiSelectCount > 1) {
+    return (
+      <div className="p-3 flex flex-col gap-3 text-xs text-gray-200 overflow-y-auto">
+        <div className="flex items-center justify-between">
+          <span className="font-semibold text-sm text-gray-100">{multiSelectCount} eleman seçili</span>
+          <div className="flex gap-1">
+            <button title="Kopyala (çoğalt)" onClick={duplicateSelected} className="p-1 hover:bg-white/10 rounded">
+              <Copy size={14} />
+            </button>
+            <button title="Sil" onClick={removeSelected} className="p-1 hover:bg-red-500/20 rounded text-red-400">
+              <Trash2 size={14} />
+            </button>
+          </div>
+        </div>
+        <AlignToolbar onAlign={alignSelected} distributeEnabled={multiSelectCount >= 3} />
+        <p className="text-[11px] text-gray-500">
+          Ctrl/Cmd+C kopyala, Ctrl/Cmd+V yapıştır, Ctrl/Cmd+D çoğalt, Delete sil.
+        </p>
+      </div>
+    );
+  }
 
   if (!el) {
     return <div className="p-4 text-sm text-gray-500">Düzenlemek için bir eleman seçin.</div>;
   }
 
-  const commit = (patch: Record<string, unknown>, opts?: { skipQrNormalize?: boolean }) => {
+  const commit = (patch: Record<string, unknown>, opts?: { skipSizeNormalize?: boolean }) => {
     updateElement(el.id, patch, opts);
   };
   const commitAndSave = (patch: Record<string, unknown>) => {
@@ -52,6 +101,8 @@ export default function PropertiesPanel() {
         </div>
       </div>
 
+      <AlignToolbar onAlign={alignSelected} distributeEnabled={false} />
+
       <div className="grid grid-cols-2 gap-2">
         <Field label="X (mm)">
           <input type="number" value={round(el.x)} onChange={(e) => commit({ x: num(e) })} onBlur={() => pushHistory()} className={inputCls} />
@@ -72,13 +123,19 @@ export default function PropertiesPanel() {
                 // QR gerçek boyutu modül sayısı x büyütme ile sabitlenir; yazarken
                 // her tuş vuruşunda anlık kilitleme yapmayıp sadece onBlur'da en yakın
                 // geçerli büyütmeye (1-10) kilitliyoruz.
-                commit({ width, height: width }, { skipQrNormalize: true });
+                commit({ width, height: width }, { skipSizeNormalize: true });
+              } else if (el.type === 'barcode') {
+                // Barkod gerçek genişliği modül sayısı x modül genişliği (dot) ile
+                // sabitlenir; yazarken anlık kilitleme yapmayıp onBlur'da en yakın
+                // geçerli modül genişliğine (1-10 dot) kilitliyoruz.
+                commit({ width }, { skipSizeNormalize: true });
               } else {
                 commit({ width });
               }
             }}
             onBlur={() => {
               if (el.type === 'qr') finalizeQrSize(el.id);
+              if (el.type === 'barcode') finalizeBarcodeSize(el.id);
               pushHistory();
             }}
             className={inputCls}
@@ -94,7 +151,7 @@ export default function PropertiesPanel() {
                 const ratio = el.width / el.height;
                 commit({ height, width: ratio ? height * ratio : el.width });
               } else if (el.type === 'qr') {
-                commit({ width: height, height }, { skipQrNormalize: true });
+                commit({ width: height, height }, { skipSizeNormalize: true });
               } else {
                 commit({ height });
               }
@@ -127,6 +184,53 @@ export default function PropertiesPanel() {
 }
 
 const inputCls = 'w-full bg-[#0f1115] border border-white/10 rounded px-2 py-1 text-xs';
+
+function AlignToolbar({
+  onAlign,
+  distributeEnabled,
+}: {
+  onAlign: (mode: AlignMode) => void;
+  distributeEnabled: boolean;
+}) {
+  const btn = 'p-1.5 hover:bg-white/10 rounded text-gray-300';
+  return (
+    <div className="flex flex-col gap-1 border-t border-b border-white/10 py-2">
+      <span className="text-gray-400">Hizala</span>
+      <div className="flex items-center gap-1">
+        <button title="Sola hizala" onClick={() => onAlign('left')} className={btn}>
+          <AlignHorizontalJustifyStart size={15} />
+        </button>
+        <button title="Yatayda ortala" onClick={() => onAlign('centerH')} className={btn}>
+          <AlignHorizontalJustifyCenter size={15} />
+        </button>
+        <button title="Sağa hizala" onClick={() => onAlign('right')} className={btn}>
+          <AlignHorizontalJustifyEnd size={15} />
+        </button>
+        <div className="w-px h-4 bg-white/10 mx-0.5" />
+        <button title="Üste hizala" onClick={() => onAlign('top')} className={btn}>
+          <AlignVerticalJustifyStart size={15} />
+        </button>
+        <button title="Dikeyde ortala" onClick={() => onAlign('centerV')} className={btn}>
+          <AlignVerticalJustifyCenter size={15} />
+        </button>
+        <button title="Alta hizala" onClick={() => onAlign('bottom')} className={btn}>
+          <AlignVerticalJustifyEnd size={15} />
+        </button>
+        {distributeEnabled && (
+          <>
+            <div className="w-px h-4 bg-white/10 mx-0.5" />
+            <button title="Yatayda dağıt" onClick={() => onAlign('distributeH')} className={btn}>
+              <AlignHorizontalDistributeCenter size={15} />
+            </button>
+            <button title="Dikeyde dağıt" onClick={() => onAlign('distributeV')} className={btn}>
+              <AlignVerticalDistributeCenter size={15} />
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -347,13 +451,26 @@ function BarcodeProps({
         <input value={el.data} onChange={(e) => commit({ data: e.target.value })} onBlur={() => commitAndSave({})} className={inputCls} />
       </Field>
       <div className="grid grid-cols-2 gap-2">
-        <Field label="Modül Genişliği">
-          <input type="number" value={el.moduleWidth} onChange={(e) => commit({ moduleWidth: num(e) })} onBlur={() => commitAndSave({})} className={inputCls} />
+        <Field label="Modül Genişliği (dot)">
+          <input
+            type="number"
+            min={MIN_MODULE_WIDTH_DOTS}
+            max={MAX_MODULE_WIDTH_DOTS}
+            value={el.moduleWidth}
+            onChange={(e) => commit({ moduleWidth: num(e) })}
+            onBlur={() => commitAndSave({})}
+            className={inputCls}
+          />
         </Field>
         <Field label="Oran">
           <input type="number" value={el.ratio} onChange={(e) => commit({ ratio: num(e) })} onBlur={() => commitAndSave({})} className={inputCls} />
         </Field>
       </div>
+      <p className="text-[11px] text-gray-500">
+        Genişlik (mm) gerçek baskıda modül sayısı x Modül Genişliği (dot, {MIN_MODULE_WIDTH_DOTS}-{MAX_MODULE_WIDTH_DOTS}) olarak
+        oluşur. Bu ikisi birbirine kilitlidir: genişliği sürükleyip/yazınca modül genişliği otomatik güncellenir (ve tersi) --
+        böylece önizleme her zaman gerçek ZPL çıktısıyla eşleşir.
+      </p>
       {meta.supportsShowText && (
         <label className="flex items-center gap-2">
           <input type="checkbox" checked={el.showText} onChange={(e) => commitAndSave({ showText: e.target.checked })} />
@@ -379,8 +496,8 @@ function QrProps({
         <input value={el.data} onChange={(e) => commit({ data: e.target.value })} onBlur={() => commitAndSave({})} className={inputCls} />
       </Field>
       <div className="grid grid-cols-2 gap-2">
-        <Field label="Büyütme (1-10)">
-          <input type="number" min={1} max={10} value={el.magnification} onChange={(e) => commit({ magnification: num(e) })} onBlur={() => commitAndSave({})} className={inputCls} />
+        <Field label="Büyütme">
+          <input type="number" min={1} value={el.magnification} onChange={(e) => commit({ magnification: num(e) })} onBlur={() => commitAndSave({})} className={inputCls} />
         </Field>
         <Field label="Hata Düzeltme">
           <select value={el.errorCorrection} onChange={(e) => commitAndSave({ errorCorrection: e.target.value })} className={inputCls}>
@@ -391,6 +508,11 @@ function QrProps({
           </select>
         </Field>
       </div>
+      {el.magnification > 10 && (
+        <p className="text-[11px] text-amber-400">
+          10 üzeri büyütmede QR, ^BQ yerine bitmap (^GFA) olarak gömülür; boyut sınırsız büyüyebilir.
+        </p>
+      )}
     </div>
   );
 }
