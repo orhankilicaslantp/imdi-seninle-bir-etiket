@@ -19,6 +19,7 @@ import { dotsToMm } from './units';
 import { getBarcodeMeta, ZPL_CODE_TO_SYMBOLOGY } from './barcodeSymbologies';
 import { barcodeWidthMm, clampModuleWidth, getBarcodeModuleCount } from './barcodeSize';
 import { clampMagnification, getQrModuleCount, qrSizeMm } from './qrSize';
+import { gfDataToBytes } from './gfDecode';
 import { nextId } from '../state/useLabelStore';
 
 export interface ZplImportResult {
@@ -42,6 +43,11 @@ interface ParseFieldState {
   pendingBarcodeCmd: { code: string; params: string[] } | null;
   pendingQrCmd: { orientation: 'N' | 'R' | 'I' | 'B'; magnification: number } | null;
   hexEscape: boolean;
+  fieldBlock: { width: number; justification: 'L' | 'C' | 'R' | 'J' } | null;
+  /** ^FT ile mi konumlandırıldı? ^FO y'si üst-sol referanslıdır, ^FT y'si ise metin için
+   * baseline, barkod/QR/grafik için sembolün alt kenarı referanslıdır -- bu yüzden içe
+   * aktarılan elemanın gerçek üst-sol y'sini hesaplarken bu farkın telafi edilmesi gerekir. */
+  isFT: boolean;
 }
 
 function freshField(): ParseFieldState {
@@ -59,6 +65,8 @@ function freshField(): ParseFieldState {
     pendingBarcodeCmd: null,
     pendingQrCmd: null,
     hexEscape: false,
+    fieldBlock: null,
+    isFT: false,
   };
 }
 
@@ -133,12 +141,22 @@ function makeText(
 
   const fontSizeMm = dotsToMm(field.fontHeight, dpi);
   const widthDots = estimateTextWidthDots(data, field.fontHeight);
+  // ^FT'de y, metnin baseline'ıdır -- gerçek üst-sol y'yi elde etmek için font
+  // yüksekliği kadar yukarı kaydırılır (^FO'da bu offsete gerek yoktur).
+  const yTopDots = field.isFT ? field.y - field.fontHeight : field.y;
+  // ^FB (Field Block) varsa, blok genişliği elemanın genişliği olarak kullanılır ve
+  // yaslama (L/C/R) align alanına yansıtılır; böylece hizalama ZPL'deki gibi korunur.
+  const alignMap: Record<string, 'left' | 'center' | 'right'> = { L: 'left', C: 'center', R: 'right', J: 'left' };
+  const align = field.fieldBlock ? alignMap[field.fieldBlock.justification] || 'left' : 'left';
+  const widthMm = field.fieldBlock && field.fieldBlock.width > 0
+    ? dotsToMm(field.fieldBlock.width, dpi)
+    : Math.max(5, dotsToMm(widthDots, dpi));
   return {
     id: nextId('text'),
     type: 'text',
     x: dotsToMm(field.x, dpi),
-    y: dotsToMm(field.y, dpi),
-    width: Math.max(5, dotsToMm(widthDots, dpi)),
+    y: dotsToMm(yTopDots, dpi),
+    width: widthMm,
     height: Math.max(2, fontSizeMm * 1.3),
     rotation,
     zIndex,
@@ -146,22 +164,23 @@ function makeText(
     fontSize: fontSizeMm,
     fontRef,
     isCustomFont,
-    align: 'left',
+    align,
   };
 }
 
-function makeShape(field: ParseFieldState, params: string[], dpi: Dpi, zIndex: number): ShapeElement {
+function makeShape(field: ParseFieldState, params: string[], dpi: Dpi, zIndex: number, reverse: boolean): ShapeElement {
   const w = parseInt(params[0], 10) || 1;
   const h = parseInt(params[1], 10) || 1;
   const thickness = parseInt(params[2], 10) || 1;
   const color = (params[3] as 'B' | 'W') || 'B';
   const rounding = parseInt(params[4], 10) || 0;
   const isLine = h <= thickness;
+  const yTopDots = field.isFT ? field.y - h : field.y;
   return {
     id: nextId('shape'),
     type: 'shape',
     x: dotsToMm(field.x, dpi),
-    y: dotsToMm(field.y, dpi),
+    y: dotsToMm(yTopDots, dpi),
     width: Math.max(0.1, dotsToMm(w, dpi)),
     height: Math.max(0.1, dotsToMm(isLine ? thickness : h, dpi)),
     rotation: 0,
@@ -170,6 +189,7 @@ function makeShape(field: ParseFieldState, params: string[], dpi: Dpi, zIndex: n
     thicknessMm: Math.max(0.1, dotsToMm(thickness, dpi)),
     color: color === 'W' ? 'white' : 'black',
     cornerRounding: Math.max(0, Math.min(8, rounding)),
+    ...(reverse ? { reverse: true } : {}),
   };
 }
 
@@ -194,11 +214,14 @@ function makeBarcode(
   const moduleWidth = clampModuleWidth(field.byModuleWidth);
   const width = barcodeWidthMm(moduleCount, moduleWidth, dpi);
   const heightMm = Math.max(1, dotsToMm(field.byHeight, dpi));
+  // ^FT'de y, barkodun (yazı hariç) alt kenarını gösterir -- ^BY height'i (bar yüksekliği)
+  // ile geriye kaydırılarak gerçek üst-sol y elde edilir.
+  const yTopDots = field.isFT ? field.y - field.byHeight : field.y;
   return {
     id: nextId('barcode'),
     type: 'barcode',
     x: dotsToMm(field.x, dpi),
-    y: dotsToMm(field.y, dpi),
+    y: dotsToMm(yTopDots, dpi),
     width,
     height: heightMm,
     rotation: orientationToRotation(orientation),
@@ -221,11 +244,18 @@ function makeQr(field: ParseFieldState, fdRaw: string, dpi: Dpi, zIndex: number)
   const magnification = clampMagnification(field.pendingQrCmd.magnification);
   const moduleCount = getQrModuleCount(data, errorCorrection);
   const size = qrSizeMm(moduleCount, magnification, dpi);
+  // ^FT'de y, QR sembolünün alt kenarını gösterir -- sembol boyutu (dot) kadar geriye
+  // kaydırılarak gerçek üst-sol y elde edilir. Ayrıca bilinen bir Zebra firmware tuhaflığı:
+  // o ana kadar ayarlanmış (sticky) ^BY yükseklik parametresi -- ^FO kullanılsa bile -- QR
+  // kodunu aşağı kaydırır (bkz. Zebra KB "^BY Command parameter causes a position shift of
+  // the QR Code Barcode"). Bu kaymayı telafi etmek için byHeight de düşülür.
+  const sizeDots = moduleCount * magnification;
+  const yTopDots = (field.isFT ? field.y - sizeDots : field.y) - field.byHeight;
   return {
     id: nextId('qr'),
     type: 'qr',
     x: dotsToMm(field.x, dpi),
-    y: dotsToMm(field.y, dpi),
+    y: dotsToMm(yTopDots, dpi),
     width: size,
     height: size,
     rotation: orientationToRotation(field.pendingQrCmd.orientation),
@@ -253,10 +283,8 @@ function makeImageFromGf(field: ParseFieldState, gfParamsRaw: string, dpi: Dpi, 
   const width = rowBytes * 8;
   if (!width || !height || width > 10000 || height > 10000) return null;
 
-  const bytes = new Uint8Array(totalBytes);
-  for (let i = 0; i < totalBytes; i++) {
-    bytes[i] = parseInt(hexData.substr(i * 2, 2), 16) || 0;
-  }
+  // Sıkıştırılmış (ACS) veya düz HEX veriyi bayt dizisine aç.
+  const bytes = gfDataToBytes(hexData, rowBytes, totalBytes);
 
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -285,12 +313,15 @@ function makeImageFromGf(field: ParseFieldState, gfParamsRaw: string, dpi: Dpi, 
   }
   ctx.putImageData(imgData, 0, 0);
   const dataUrl = canvas.toDataURL('image/png');
+  // ^FT'de y, görselin alt kenarını gösterir -- görsel yüksekliği kadar geriye
+  // kaydırılarak gerçek üst-sol y elde edilir.
+  const yTopDots = field.isFT ? field.y - height : field.y;
 
   return {
     id: nextId('image'),
     type: 'image',
     x: dotsToMm(field.x, dpi),
-    y: dotsToMm(field.y, dpi),
+    y: dotsToMm(yTopDots, dpi),
     width: dotsToMm(width, dpi),
     height: dotsToMm(height, dpi),
     rotation: 0,
@@ -313,6 +344,7 @@ export function parseZplToElements(zpl: string, dpi: Dpi, customFonts: CustomFon
 
   const tokens = zpl.split(/(?=[\^~])/).filter((t) => t.trim().length > 0);
   let field = freshField();
+  let labelReverse = false; // ^LR (Label Reverse) durumu
   const unknownCodes = new Set<string>();
 
   for (const rawToken of tokens) {
@@ -327,6 +359,7 @@ export function parseZplToElements(zpl: string, dpi: Dpi, customFonts: CustomFon
       const params = token.slice(3).split(',');
       field.x = parseInt(params[0], 10) || 0;
       field.y = parseInt(params[1], 10) || 0;
+      field.isFT = token.startsWith('^FT');
       continue;
     }
 
@@ -375,14 +408,26 @@ export function parseZplToElements(zpl: string, dpi: Dpi, customFonts: CustomFon
     }
 
     if (token.startsWith('^FB')) {
-      // Bu sistemde ^FB hiç üretilmiyor; yapıştırılan kodda varsa metin konumlandırmasını
-      // etkilemeden yoksayılır (kırpma/kayma riskini önlemek için).
+      // Field Block: sonraki metin alanının blok genişliği ve yaslamasını belirtir.
+      // Bu bilgi makeText()'te align/width'e yansıtılır -- böylece dışarıdan yapıştırılan
+      // ortalanmış/sağa yaslı metinler içe aktarımda sola kaymadan doğru gelir.
+      const params = token.slice(3).split(',');
+      field.fieldBlock = {
+        width: parseInt(params[0], 10) || 0,
+        justification: (params[3] as 'L' | 'C' | 'R' | 'J') || 'L',
+      };
+      continue;
+    }
+
+    if (token.startsWith('^LR')) {
+      // Label Reverse: ^LRY ters baskıyı açar, ^LRN kapatır (^XZ'ye kadar sürer).
+      labelReverse = token.slice(3, 4).toUpperCase() === 'Y';
       continue;
     }
 
     if (token.startsWith('^GB')) {
       const params = token.slice(3).split(',');
-      elements.push(makeShape(field, params, dpi, zIndex++));
+      elements.push(makeShape(field, params, dpi, zIndex++, labelReverse));
       continue;
     }
 
@@ -418,6 +463,10 @@ export function parseZplToElements(zpl: string, dpi: Dpi, customFonts: CustomFon
           zIndex++;
         }
       } else {
+        // ^FD içindeki "\&" (backslash+ampersand) ZPL'de satır sonu/kesme işaretidir.
+        // ^FB (Field Block) aktifse gerçek bir satır sonu olarak tüketilir (görünmez);
+        // değilse yazıcı ters eğik çizgiyi düşürüp yalnızca "&" karakterini basar.
+        data = field.fieldBlock ? data.replace(/\\&/g, '') : data.replace(/\\&/g, '&');
         elements.push(makeText(field, data, dpi, customFonts, warnings, zIndex));
         zIndex++;
       }

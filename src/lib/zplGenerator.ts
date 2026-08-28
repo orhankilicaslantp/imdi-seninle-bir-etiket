@@ -104,7 +104,11 @@ function genText(el: TextElement, ctx: GeneratorContext, offsetXDots: number): s
   const { x, y } = applyAlignShift(baseX, baseY, shift, orientation);
 
   if (font) {
-    lines.push(`^FT${x},${y}`);
+    // Not: ^FT yerine ^FO kullanılıyor -- ^FT'nin y koordinatı gerçek ZPL'de metnin
+    // baseline'ı (alt kenarı) olduğundan, tasarım kanvasındaki üst-sol referanslı y ile
+    // doğrudan eşleşmez ve baskıda metin önizlemeye göre kayardı. ^FO ile diğer tüm
+    // eleman türleriyle (şekil, resim, barkod, QR) aynı üst-sol referans korunur.
+    lines.push(`^FO${x},${y}`);
     lines.push(generateFontRefZpl(font, h, w, orientation));
     lines.push('^FH\\');
     lines.push('^CI28');
@@ -123,14 +127,47 @@ function genShape(el: ShapeElement, ctx: GeneratorContext, offsetXDots: number):
   const { dpi } = ctx.labelSettings;
   const x = mmToDots(el.x, dpi) + offsetXDots;
   const y = mmToDots(el.y, dpi);
-  const w = Math.max(1, mmToDots(el.width, dpi));
-  const h = el.shape === 'line' ? Math.max(1, mmToDots(el.thicknessMm, dpi)) : Math.max(1, mmToDots(el.height, dpi));
   const thickness = Math.max(1, mmToDots(el.thicknessMm, dpi));
   const color = el.color === 'white' ? 'W' : 'B';
+
+  // Döndürmesiz temel kutu boyutları (dot)
+  let boxW: number;
+  let boxH: number;
   if (el.shape === 'line') {
-    return `^FO${x},${y}^GB${w},${thickness},${thickness},${color},0^FS`;
+    // Çizgi yönü elemanın en/boy oranından belirlenir: uzun-dar ise dikey, aksi halde yatay.
+    const wDots = Math.max(1, mmToDots(el.width, dpi));
+    const hDots = Math.max(1, mmToDots(el.height, dpi));
+    if (hDots > wDots) {
+      boxW = thickness;
+      boxH = hDots;
+    } else {
+      boxW = wDots;
+      boxH = thickness;
+    }
+  } else {
+    boxW = Math.max(1, mmToDots(el.width, dpi));
+    boxH = Math.max(1, mmToDots(el.height, dpi));
   }
-  return `^FO${x},${y}^GB${w},${h},${thickness},${color},${el.cornerRounding}^FS`;
+
+  // ^GB doğal olarak dönmez; 90/270 için boyutları takas edip kutuyu merkez
+  // etrafında yeniden konumlandırarak tasarım katmanındaki CSS rotasyonuyla eşleştir.
+  let drawW = boxW;
+  let drawH = boxH;
+  let drawX = x;
+  let drawY = y;
+  if (el.rotation === 90 || el.rotation === 270) {
+    const cx = x + boxW / 2;
+    const cy = y + boxH / 2;
+    drawW = boxH;
+    drawH = boxW;
+    drawX = Math.round(cx - drawW / 2);
+    drawY = Math.round(cy - drawH / 2);
+  }
+
+  const rounding = el.shape === 'line' ? 0 : el.cornerRounding;
+  const box = `^FO${drawX},${drawY}^GB${drawW},${drawH},${thickness},${color},${rounding}^FS`;
+  // Ters baskı: alanı ^LR ile sar -- yorumlayıcı bu bölgeyi ters çevirir (siyah zemin/beyaz yazı).
+  return el.reverse ? `^LRY${box}^LRN` : box;
 }
 
 function genBitmapField(elId: string, x: number, y: number, ctx: GeneratorContext): string {
@@ -202,12 +239,10 @@ export function generateElementZpl(el: LabelElement, ctx: GeneratorContext, offs
 }
 
 export function generateLabelZpl(elements: LabelElement[], ctx: GeneratorContext): string {
-  const { widthMm, heightMm, dpi, labelsAcross, horizontalGapMm } = ctx.labelSettings;
+  const { widthMm, dpi, labelsAcross, horizontalGapMm } = ctx.labelSettings;
   const labelWidthDots = mmToDots(widthMm, dpi);
   const gapDots = mmToDots(horizontalGapMm, dpi);
   const count = Math.max(1, labelsAcross || 1);
-  const pw = count * labelWidthDots + (count - 1) * gapDots;
-  const ll = mmToDots(heightMm, dpi);
 
   // Not: Özel fontlar burada indirilmez (~DY üretilmez). Fontların yazıcı belleğine
   // önceden yüklendiği kabul edilir; ZPL'de sadece ^A@ ile bellek adına referans verilir.
@@ -222,11 +257,12 @@ export function generateLabelZpl(elements: LabelElement[], ctx: GeneratorContext
     }
   }
 
+  // Not: Etiket ebatı (^PW/^LL) ZPL çıktısına YAZILMAZ -- ebat yalnızca uygulama içi
+  // önizleme (canvas boyutlandırma) için kullanılır. Böylece üretilen kod, yazıcının
+  // kendi etiket/medya ayarlarına müdahale etmez.
   const parts: string[] = [];
   parts.push('^XA');
   parts.push('^CI28');
-  parts.push(`^PW${pw}`);
-  parts.push(`^LL${ll}`);
   for (const b of body) parts.push(b);
   parts.push('^XZ');
   return parts.join('\n');

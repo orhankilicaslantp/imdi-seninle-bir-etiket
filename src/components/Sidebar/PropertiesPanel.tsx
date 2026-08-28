@@ -346,6 +346,24 @@ function ShapeProps({
           </select>
         </Field>
       </div>
+      {el.shape === 'line' && (
+        <Field label="Yön">
+          <select
+            value={el.height > el.width ? 'vertical' : 'horizontal'}
+            onChange={(e) => {
+              const wantVertical = e.target.value === 'vertical';
+              const isVertical = el.height > el.width;
+              if (wantVertical !== isVertical) {
+                commitAndSave({ width: el.height, height: el.width });
+              }
+            }}
+            className={inputCls}
+          >
+            <option value="horizontal">Yatay</option>
+            <option value="vertical">Dikey</option>
+          </select>
+        </Field>
+      )}
       {el.shape === 'rectangle' && (
         <Field label="Köşe Yuvarlama (0-8)">
           <input

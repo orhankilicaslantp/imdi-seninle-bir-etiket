@@ -41,7 +41,7 @@ function App() {
   const [rightTab, setRightTab] = useState<RightTab>('properties');
   const [leftTab, setLeftTab] = useState<LeftTab>('elements');
   const [manualZpl, setManualZpl] = useState<string | null>(null);
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(1.5);
   const [showImportModal, setShowImportModal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pxPerMm = BASE_PX_PER_MM * zoom;
@@ -49,7 +49,7 @@ function App() {
   const clampZoom = (z: number) => Math.round(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z)) * 100) / 100;
   const zoomIn = () => setZoom((z) => clampZoom(z + ZOOM_STEP));
   const zoomOut = () => setZoom((z) => clampZoom(z - ZOOM_STEP));
-  const resetZoom = () => setZoom(1);
+  const resetZoom = () => setZoom(1.5);
   const handleCanvasWheel = (e: React.WheelEvent) => {
     if (!e.ctrlKey && !e.metaKey) return;
     e.preventDefault();
@@ -200,7 +200,7 @@ function App() {
             <button onClick={zoomIn} className="p-1.5 bg-white/10 rounded hover:bg-white/20" title="Yakınlaştır">
               <ZoomIn size={14} />
             </button>
-            <button onClick={resetZoom} className="p-1.5 bg-white/10 rounded hover:bg-white/20" title="Sıfırla (%100)">
+            <button onClick={resetZoom} className="p-1.5 bg-white/10 rounded hover:bg-white/20" title="Sıfırla (%150)">
               <RotateCcw size={14} />
             </button>
             <span className="text-gray-500">Ctrl/Cmd + scroll ile de yakınlaştırabilirsiniz — bu görünüm, gerçek baskının aynısıdır.</span>
@@ -208,6 +208,8 @@ function App() {
           <div
             className="flex-1 overflow-auto flex items-start justify-center p-6"
             onWheel={handleCanvasWheel}
+            data-canvas-viewport
+            data-marquee-bg
           >
             <DesignCanvas pxPerMm={pxPerMm} zpl={activeZpl} dpi={labelSettings.dpi} customFonts={customFonts} />
           </div>

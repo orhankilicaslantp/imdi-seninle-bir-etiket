@@ -3,6 +3,7 @@ import QRCode from 'qrcode';
 import type { CustomFont, Dpi } from '../types';
 import { base64ToBytes } from './fontToZpl';
 import { getBarcodeMeta, drawPlaceholderBarcode, ZPL_CODE_TO_SYMBOLOGY } from './barcodeSymbologies';
+import { gfDataToBytes } from './gfDecode';
 
 export interface InterpretResult {
   warnings: string[];
@@ -25,6 +26,11 @@ interface FieldState {
   pendingGf: string | null; // raw ^GF... token param string
   hexEscape: boolean;
   fieldBlock: { width: number; justification: 'L' | 'C' | 'R' | 'J' } | null;
+  /** ^FT ile konumlandırıldı mı? ZPL'de ^FO y'si üst-sol referanslıdır, ^FT y'si ise
+   * metin için baseline (alt kenar), barkod/QR/grafik için sembolün alt kenarı referanslıdır.
+   * Bu fark render'da telafi edilmezse ^FT kullanan (özellikle dışarıdan yapıştırılan) ZPL
+   * kodları önizlemede/baskıda farklı konumlara düşer. */
+  isFT: boolean;
 }
 
 function freshField(): FieldState {
@@ -45,6 +51,7 @@ function freshField(): FieldState {
     pendingGf: null,
     hexEscape: false,
     fieldBlock: null,
+    isFT: false,
   };
 }
 
@@ -81,6 +88,7 @@ function drawGfBitmap(
   x: number,
   y: number,
   gfParamsRaw: string,
+  isFT = false,
 ): void {
   // format,dataBytes,totalBytes,rowBytes,hexdata
   const firstComma = gfParamsRaw.indexOf(',');
@@ -90,15 +98,14 @@ function drawGfBitmap(
   const totalBytes = parseInt(parts[1], 10);
   const rowBytes = parseInt(parts[2], 10);
   const hexData = parts.slice(3).join(',');
+  if (!Number.isFinite(totalBytes) || !Number.isFinite(rowBytes) || rowBytes <= 0) return;
   const height = Math.floor(totalBytes / rowBytes);
   const width = rowBytes * 8;
   if (!width || !height || width > 10000 || height > 10000) return;
+  const drawY = isFT ? y - height : y;
 
-  const bytes = new Uint8Array(totalBytes);
-  for (let i = 0; i < totalBytes; i++) {
-    const byteHex = hexData.substr(i * 2, 2);
-    bytes[i] = parseInt(byteHex, 16) || 0;
-  }
+  // Sıkıştırılmış (ACS) veya düz HEX veriyi bayt dizisine aç.
+  const bytes = gfDataToBytes(hexData, rowBytes, totalBytes);
 
   const off = document.createElement('canvas');
   off.width = width;
@@ -122,7 +129,7 @@ function drawGfBitmap(
     }
   }
   octx.putImageData(imgData, 0, 0);
-  ctx.drawImage(off, x, y);
+  ctx.drawImage(off, x, drawY);
 }
 
 function drawBarcode(
@@ -149,7 +156,10 @@ function drawBarcode(
         margin: 0,
         fontSize: 14,
       });
-      ctx.drawImage(off, x, y);
+      // ^FT'de y, barkodun (yazı hariç) alt kenarını gösterir -- ^BY'nin height
+      // parametresi bar yüksekliğidir, bu yüzden offset için byHeight kullanılır.
+      const drawY = field.isFT ? y - field.byHeight : y;
+      ctx.drawImage(off, x, drawY);
       return;
     } catch {
       warnings.push(`Barkod render edilemedi: ${data}`);
@@ -160,7 +170,8 @@ function drawBarcode(
   const label = meta ? meta.label : field.pendingBarcodeCmd.code;
   const w = Math.max(60, data.length * Math.max(1, field.byModuleWidth) * 11);
   const h = Math.max(30, field.byHeight);
-  drawPlaceholderBarcode(ctx, x, y, w, h, label, data);
+  const drawY = field.isFT ? y - h : y;
+  drawPlaceholderBarcode(ctx, x, drawY, w, h, label, data);
   warnings.push(`${label} barkodu bu önizlemede yaklaşık gösteriliyor (desen yazıcı tarafından üretilir).`);
 }
 
@@ -187,7 +198,13 @@ function drawQr(
     // gösterir ve metinlerle aşırı örtüşmeye sebep olur.
     const moduleSize = Math.max(1, Math.round(field.pendingQrCmd.magnification));
     QRCode.toCanvas(off, data, { errorCorrectionLevel, margin: 0, width: undefined, scale: moduleSize });
-    ctx.drawImage(off, x, y);
+    // ^FT'de y, sembolün alt kenarını gösterir -- render sonrası oluşan gerçek yükseklik
+    // (off.height) ile offset uygulanır. Ayrıca bilinen bir Zebra firmware tuhaflığı: o ana
+    // kadar ayarlanmış (sticky) ^BY yükseklik parametresi -- ^FO kullanılsa bile -- QR kodunu
+    // aşağı kaydırır (bkz. Zebra KB "^BY Command parameter causes a position shift of the QR
+    // Code Barcode"). Bu kaymayı telafi etmek için byHeight de düşülür.
+    const drawY = (field.isFT ? y - off.height : y) - field.byHeight;
+    ctx.drawImage(off, x, drawY);
   } catch {
     warnings.push(`QR kod render edilemedi: ${data}`);
   }
@@ -199,15 +216,24 @@ export async function renderZplToCanvas(
   dpi: Dpi,
   customFonts: CustomFont[],
   scale = 2,
+  forcedSize?: { widthDots: number; heightDots: number },
 ): Promise<InterpretResult> {
   const warnings: string[] = [];
   let pw = Math.round(4 * dpi);
   let ll = Math.round(6 * dpi);
 
-  const pwMatch = zpl.match(/\^PW(\d+)/);
-  const llMatch = zpl.match(/\^LL(\d+)/);
-  if (pwMatch) pw = parseInt(pwMatch[1], 10);
-  if (llMatch) ll = parseInt(llMatch[1], 10);
+  // Önizleme boyutu artık ZPL'deki ^PW/^LL'den değil, uygulamadaki etiket ayarlarından
+  // (forcedSize) gelir -- üretilen ZPL ebat komutu içermez. Geriye dönük uyumluluk için
+  // (örn. elle yapıştırılan kodda ^PW/^LL varsa) yine de ayrıştırılır.
+  if (forcedSize) {
+    pw = forcedSize.widthDots;
+    ll = forcedSize.heightDots;
+  } else {
+    const pwMatch = zpl.match(/\^PW(\d+)/);
+    const llMatch = zpl.match(/\^LL(\d+)/);
+    if (pwMatch) pw = parseInt(pwMatch[1], 10);
+    if (llMatch) ll = parseInt(llMatch[1], 10);
+  }
 
   canvas.width = Math.max(1, Math.round(pw * scale));
   canvas.height = Math.max(1, Math.round(ll * scale));
@@ -251,6 +277,7 @@ export async function renderZplToCanvas(
 
   const tokens = zpl.split(/(?=[\^~])/).filter((t) => t.trim().length > 0);
   let field = freshField();
+  let labelReverse = false; // ^LR (Label Reverse) durumu -- ^XZ'ye kadar sürer
 
   for (const rawToken of tokens) {
     const token = rawToken.trim();
@@ -263,6 +290,7 @@ export async function renderZplToCanvas(
       const params = token.slice(3).split(',');
       field.x = parseInt(params[0], 10) || 0;
       field.y = parseInt(params[1], 10) || 0;
+      field.isFT = token.startsWith('^FT');
       continue;
     }
 
@@ -321,19 +349,34 @@ export async function renderZplToCanvas(
       continue;
     }
 
+    if (token.startsWith('^LR')) {
+      // Label Reverse: ^LRY ters baskıyı açar, ^LRN kapatır (^XZ'ye kadar sürer).
+      labelReverse = token.slice(3, 4).toUpperCase() === 'Y';
+      continue;
+    }
+
     if (token.startsWith('^GB')) {
       const params = token.slice(3).split(',');
       const w = parseInt(params[0], 10) || 1;
-      const h = parseInt(params[1], 10) || 1;
+      let h = parseInt(params[1], 10);
+      if (!Number.isFinite(h)) h = 1;
       const thickness = parseInt(params[2], 10) || 1;
       const color = (params[3] as 'B' | 'W') || 'B';
       const rounding = parseInt(params[4], 10) || 0;
-      drawShape(ctx, field.x, field.y, w, h, thickness, color, rounding);
+      // Dolu bar: yükseklik <= kalınlık ise gerçek yükseklik = kalınlık (solid).
+      const solidH = h <= thickness ? thickness : h;
+      const drawY = field.isFT ? field.y - solidH : field.y;
+      if (labelReverse) {
+        // Ters baskı: kutunun altındaki pikselleri ters çevir (siyah zemin/beyaz yazı).
+        invertRegion(ctx, field.x, drawY, w, solidH, scale);
+      } else {
+        drawShape(ctx, field.x, drawY, w, h, thickness, color, rounding);
+      }
       continue;
     }
 
     if (token.startsWith('^GF')) {
-      drawGfBitmap(ctx, field.x, field.y, token.slice(3));
+      drawGfBitmap(ctx, field.x, field.y, token.slice(3), field.isFT);
       continue;
     }
 
@@ -350,6 +393,10 @@ export async function renderZplToCanvas(
       } else if (field.pendingQrCmd) {
         drawQr(ctx, field.x, field.y, field, data, warnings);
       } else {
+        // ^FD içindeki "\&" (backslash+ampersand) ZPL'de satır sonu/kesme işaretidir.
+        // ^FB (Field Block) aktifse gerçek bir satır sonu olarak tüketilir (görünmez);
+        // değilse yazıcı ters eğik çizgiyi düşürüp yalnızca "&" karakterini basar.
+        data = field.fieldBlock ? data.replace(/\\&/g, '') : data.replace(/\\&/g, '&');
         drawText(ctx, field, data, downloadedLocators, warnings);
       }
       continue;
@@ -376,14 +423,50 @@ function drawShape(
   _rounding: number,
 ): void {
   ctx.fillStyle = color === 'W' ? '#ffffff' : '#000000';
-  if (w <= thickness * 2 || h <= thickness * 2) {
-    ctx.fillRect(x, y, w, h);
+  // Yatay bar/çizgi: yükseklik kalınlıktan küçük/eşitse kalınlık kadar dolu çiz.
+  if (h <= thickness) {
+    ctx.fillRect(x, y, w, thickness);
     return;
   }
+  // Dikey bar/çizgi: genişlik kalınlıktan küçük/eşitse kalınlık kadar dolu çiz.
+  if (w <= thickness) {
+    ctx.fillRect(x, y, thickness, h);
+    return;
+  }
+  // Çerçeve (içi boş kutu)
   ctx.fillRect(x, y, w, thickness);
   ctx.fillRect(x, y + h - thickness, w, thickness);
   ctx.fillRect(x, y, thickness, h);
   ctx.fillRect(x + w - thickness, y, thickness, h);
+}
+
+/** Verilen dikdörtgen bölgedeki pikselleri ters çevirir (^LR/^FR ters baskı efekti).
+ * ctx `scale` ile ölçeklenmiş olduğundan getImageData/putImageData için cihaz pikseline çevrilir. */
+function invertRegion(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  scale: number,
+): void {
+  const dx = Math.max(0, Math.round(x * scale));
+  const dy = Math.max(0, Math.round(y * scale));
+  const dw = Math.round(w * scale);
+  const dh = Math.round(h * scale);
+  if (dw <= 0 || dh <= 0) return;
+  try {
+    const img = ctx.getImageData(dx, dy, dw, dh);
+    const d = img.data;
+    for (let p = 0; p < d.length; p += 4) {
+      d[p] = 255 - d[p];
+      d[p + 1] = 255 - d[p + 1];
+      d[p + 2] = 255 - d[p + 2];
+    }
+    ctx.putImageData(img, dx, dy);
+  } catch {
+    // getImageData güvenlik hatası (tainted canvas) vb. -- sessizce yoksay
+  }
 }
 
 function drawText(
@@ -409,7 +492,9 @@ function drawText(
   }
   ctx.save();
   ctx.font = `${field.fontHeight}px ${fontFamily}`;
-  ctx.textBaseline = 'top';
+  // ^FO: y üst-sol referanslıdır (textBaseline='top'). ^FT: y, metnin baseline'ıdır
+  // (textBaseline='alphabetic') -- gerçek ZPL davranışıyla eşleşmesi için ayrıştırılır.
+  ctx.textBaseline = field.isFT ? 'alphabetic' : 'top';
   ctx.fillStyle = '#000000';
   ctx.translate(field.x, field.y);
   if (field.fontOrientation === 'R') ctx.rotate(Math.PI / 2);

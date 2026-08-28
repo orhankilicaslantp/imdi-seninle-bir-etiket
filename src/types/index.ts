@@ -66,6 +66,9 @@ export interface ShapeElement extends BaseElement {
   thicknessMm: number;
   color: 'black' | 'white';
   cornerRounding: number; // 0-8
+  /** Ters baskı (^LR/^FR): alanın altındaki pikselleri ters çevirir -- siyah zemin üstünde
+   * beyaz yazı efekti için kullanılır. Dolu bir kutu ile birlikte metnin üzerine gelir. */
+  reverse?: boolean;
 }
 
 export interface ImageElement extends BaseElement {

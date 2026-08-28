@@ -86,7 +86,7 @@ interface LabelStore {
 
 const DEFAULT_LABEL_SETTINGS: LabelSettings = {
   widthMm: 100,
-  heightMm: 150,
+  heightMm: 100,
   dpi: 203,
   labelsAcross: 1,
   horizontalGapMm: 0,
@@ -462,6 +462,23 @@ export function createDefaultShape(x: number, y: number): ShapeElement {
     rotation: 0,
     zIndex: 1,
     shape: 'rectangle',
+    thicknessMm: 0.5,
+    color: 'black',
+    cornerRounding: 0,
+  };
+}
+
+export function createDefaultLine(x: number, y: number): ShapeElement {
+  return {
+    id: nextId('shape'),
+    type: 'shape',
+    x,
+    y,
+    width: 40,
+    height: 0.5,
+    rotation: 0,
+    zIndex: 1,
+    shape: 'line',
     thicknessMm: 0.5,
     color: 'black',
     cornerRounding: 0,

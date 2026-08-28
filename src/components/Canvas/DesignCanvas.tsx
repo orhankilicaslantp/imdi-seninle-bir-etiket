@@ -5,6 +5,7 @@ import { useLabelStore } from '../../state/useLabelStore';
 import type { LabelElement, CustomFont, Dpi } from '../../types';
 import { computeSnap, type SnapGuides } from '../../lib/snapping';
 import { renderZplToCanvas } from '../../lib/zplInterpreter';
+import { mmToDots } from '../../lib/units';
 
 interface Props {
   pxPerMm: number;
@@ -48,7 +49,11 @@ export default function DesignCanvas({ pxPerMm, zpl, dpi, customFonts }: Props) 
     const timer = setTimeout(() => {
       const canvas = previewCanvasRef.current;
       if (!canvas) return;
-      renderZplToCanvas(zpl, canvas, dpi, customFonts, RENDER_SUPERSAMPLE).then((result) => {
+      // Etiket ebatı ZPL'de yok; önizleme boyutunu uygulama ayarlarından veriyoruz.
+      const widthDots = copiesCount * mmToDots(labelSettings.widthMm, dpi) +
+        (copiesCount - 1) * mmToDots(labelSettings.horizontalGapMm || 0, dpi);
+      const heightDots = mmToDots(labelSettings.heightMm, dpi);
+      renderZplToCanvas(zpl, canvas, dpi, customFonts, RENDER_SUPERSAMPLE, { widthDots, heightDots }).then((result) => {
         if (!cancelled) setWarnings(result.warnings);
       });
     }, RENDER_DEBOUNCE_MS);
@@ -56,7 +61,7 @@ export default function DesignCanvas({ pxPerMm, zpl, dpi, customFonts }: Props) 
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [zpl, dpi, customFonts]);
+  }, [zpl, dpi, customFonts, labelSettings.widthMm, labelSettings.heightMm, labelSettings.horizontalGapMm, copiesCount]);
 
   const [guides, setGuides] = useState<SnapGuides | null>(null);
   // Sürükleme başında grup halindeki elemanların ilk konumlarını (mm) saklar.
@@ -74,10 +79,24 @@ export default function DesignCanvas({ pxPerMm, zpl, dpi, customFonts }: Props) 
     prevSelectedIds: string[];
   } | null>(null);
 
-  const handleCanvasMouseDown = (e: ReactMouseEvent) => {
-    if (e.target !== e.currentTarget) return; // Sadece boş alana basılırsa marquee başlat
+  const handleCanvasMouseDown = (e: {
+    clientX: number;
+    clientY: number;
+    target: EventTarget | null;
+    shiftKey: boolean;
+    ctrlKey: boolean;
+    metaKey: boolean;
+    preventDefault?: () => void;
+  }) => {
+    // Marquee yalnızca boş arka plan yüzeylerinde başlar (tasarım alanı, önizleme canvas'ı,
+    // etrafındaki karanlık görüntü alanı/boşluk). Bir eleman (Rnd) üzerine basıldıysa marquee
+    // başlatılmaz -- bu yüzeyler `data-marquee-bg` ile işaretlidir. Böylece seçime tasarımın
+    // DIŞINDAN da (etrafındaki boş alandan) başlanabilir.
+    if (!(e.target as HTMLElement | null)?.hasAttribute?.('data-marquee-bg')) return;
     const rect = labelRef.current?.getBoundingClientRect();
     if (!rect) return;
+    // Sol tık dışındaki tuşları ve metin seçimini engelle.
+    e.preventDefault?.();
     const startX = e.clientX - rect.left;
     const startY = e.clientY - rect.top;
     const additive = e.shiftKey || e.ctrlKey || e.metaKey;
@@ -144,6 +163,20 @@ export default function DesignCanvas({ pxPerMm, zpl, dpi, customFonts }: Props) 
     window.addEventListener('mouseup', handleUp);
   };
 
+  // Marquee mousedown'unu tasarımı çevreleyen görüntü alanına (viewport) bağla; böylece
+  // seçim, etiketin DIŞINDAKI boş alandan da başlatılabilir. Handler her render'da yeniden
+  // oluştuğu için (güncel elements/selection closure'ı) listener de her render'da tazelenir.
+  useEffect(() => {
+    const viewport = labelRef.current?.closest('[data-canvas-viewport]') as HTMLElement | null;
+    if (!viewport) return;
+    const onDown = (ev: globalThis.MouseEvent) => {
+      if (ev.button !== 0) return; // sadece sol tık
+      handleCanvasMouseDown(ev);
+    };
+    viewport.addEventListener('mousedown', onDown);
+    return () => viewport.removeEventListener('mousedown', onDown);
+  });
+
   const handleDragStart = (el: LabelElement, e: unknown) => {
     const evt = e as { shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean } | undefined;
     const hasModifier = !!(evt?.shiftKey || evt?.ctrlKey || evt?.metaKey);
@@ -205,13 +238,17 @@ export default function DesignCanvas({ pxPerMm, zpl, dpi, customFonts }: Props) 
   };
 
   return (
-    <div className="inline-block bg-white/5 p-6 rounded-lg">
-      <div className="relative shadow-2xl" style={{ width: totalWidthPx, height: heightPx }}>
+    <div
+      className="inline-block bg-white/5 p-6 rounded-lg"
+      data-marquee-bg
+    >
+      <div className="relative shadow-2xl" style={{ width: totalWidthPx, height: heightPx }} data-marquee-bg>
         {/* Gerçek ZPL önizlemesi: tasarım burada, gerçekte baskıya çıkacak görüntünün aynısıdır. */}
         <canvas
           ref={previewCanvasRef}
           className="absolute top-0 left-0 bg-white"
           style={{ width: totalWidthPx, height: heightPx, imageRendering: 'pixelated' }}
+          data-marquee-bg
         />
 
         {/* Etkileşim katmanı: sadece ilk (düzenlenebilir) etiket kopyasının üstünde. */}
@@ -219,7 +256,7 @@ export default function DesignCanvas({ pxPerMm, zpl, dpi, customFonts }: Props) 
           ref={labelRef}
           className="absolute top-0 left-0"
           style={{ width: widthPx, height: heightPx }}
-          onMouseDown={handleCanvasMouseDown}
+          data-marquee-bg
         >
           {[...elements]
             .sort((a, b) => a.zIndex - b.zIndex)

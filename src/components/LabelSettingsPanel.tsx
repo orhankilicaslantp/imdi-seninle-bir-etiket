@@ -5,12 +5,18 @@ import type { Dpi } from '../types';
 export default function LabelSettingsPanel() {
   const { labelSettings, setLabelSettings } = useLabelStore();
 
+  const selectedPreset =
+    LABEL_PRESETS.find(
+      (p) => p.widthMm === labelSettings.widthMm && p.heightMm === labelSettings.heightMm,
+    )?.name ?? '';
+
   return (
     <div className="flex flex-wrap items-end gap-3 p-3 bg-[#1a1c22] border-b border-white/10 text-xs text-gray-300">
       <div className="flex flex-col gap-1">
         <label>Hazır Boyut</label>
         <select
           className="bg-[#0f1115] border border-white/10 rounded px-2 py-1"
+          value={selectedPreset}
           onChange={(e) => {
             const preset = LABEL_PRESETS.find((p) => p.name === e.target.value);
             if (preset) setLabelSettings({ widthMm: preset.widthMm, heightMm: preset.heightMm });
