@@ -120,3 +120,102 @@ export function gfDataToBytes(data: string, rowBytes: number, totalBytes: number
   }
   return bytes;
 }
+
+// ---------------------------------------------------------------------------
+// ACS Kodlayıcı (Labelery ile aynı biçimde sıkıştırma)
+// ---------------------------------------------------------------------------
+
+/** 1..19 tekrar için büyük harf (G=1 .. Y=19). */
+function upperCount(n: number): string {
+  return String.fromCharCode(70 + n); // G..Y
+}
+
+/** n, 20'nin katı ve <=400 olmalı: g=20 .. z=400. */
+function lowerCount(n: number): string {
+  return String.fromCharCode(102 + n / 20); // g..z
+}
+
+/** Verilen tekrar sayısını sayaç harflerine çevirir (hex nibble hariç). */
+function encodeCount(n: number): string {
+  if (n < 1) return '';
+  if (n <= 19) return upperCount(n);
+  let out = '';
+  let rest = n;
+  while (rest > 400) {
+    out += 'z';
+    rest -= 400;
+  }
+  // rest artık 20..400 (veya daha küçük) -- 20'nin katı kısmı küçük harf,
+  // kalan 1..19'luk kısım büyük harf.
+  const mult20 = Math.floor(rest / 20);
+  const rem = rest % 20;
+  if (mult20 > 0) out += lowerCount(mult20 * 20);
+  if (rem > 0) out += upperCount(rem);
+  return out;
+}
+
+/**
+ * Tam (sıkıştırılmamış) ASCII-HEX veriyi ACS run-length biçiminde sıkıştırır.
+ * Labelery'nin ürettiği biçimle uyumlu: satır sonu `,` (kalanı 0), `!` (kalanı F),
+ * önceki satırla birebir aynı satır `:` ve tekrarler G-Y / g-z harfleriyle.
+ */
+export function encodeAcsFromHex(hexData: string, rowBytes: number): string {
+  const rowNibbles = Math.max(2, rowBytes * 2);
+  const hex = hexData.replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
+  const rows = Math.ceil(hex.length / rowNibbles);
+  let out = '';
+  let prevRow = '';
+
+  for (let r = 0; r < rows; r++) {
+    const row = hex.substr(r * rowNibbles, rowNibbles);
+
+    // Tam olarak önceki satırın aynısı mı? -> ':'
+    if (prevRow && row === prevRow) {
+      out += ':';
+      continue;
+    }
+
+    let i = 0;
+    let rowOut = '';
+    while (i < row.length) {
+      // Satırın kalanı tamamı '0' mı? -> ','
+      let allZero = true;
+      for (let k = i; k < row.length; k++) {
+        if (row[k] !== '0') {
+          allZero = false;
+          break;
+        }
+      }
+      if (allZero) {
+        rowOut += ',';
+        break;
+      }
+      // Satırın kalanı tamamı 'F' mi? -> '!'
+      let allF = true;
+      for (let k = i; k < row.length; k++) {
+        if (row[k] !== 'F') {
+          allF = false;
+          break;
+        }
+      }
+      if (allF) {
+        rowOut += '!';
+        break;
+      }
+
+      // Aynı nibble'ın tekrar uzunluğu
+      const c = row[i];
+      let j = i + 1;
+      while (j < row.length && row[j] === c) j++;
+      const count = j - i;
+      // İki nibble'ı ham yazmak sayaç+nibble ile aynı uzunlukta; Labelary gibi ham bırak.
+      rowOut += count > 2 ? encodeCount(count) + c : c.repeat(count);
+      i = j;
+    }
+
+    out += rowOut;
+    prevRow = row;
+  }
+
+  return out;
+}

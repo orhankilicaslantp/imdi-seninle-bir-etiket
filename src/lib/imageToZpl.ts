@@ -2,6 +2,7 @@
 // ^GF format, dataBytes, totalBytes, rowBytes, data  (format=A => ASCII HEX, dataBytes===totalBytes)
 
 import QRCode from 'qrcode';
+import { encodeAcsFromHex } from './gfDecode';
 
 export interface MonoBitmap {
   widthPx: number;
@@ -53,7 +54,9 @@ export function canvasToMonoBitmap(
 }
 
 export function monoBitmapToGfCommand(bmp: MonoBitmap): string {
-  return `^GFA,${bmp.totalBytes},${bmp.totalBytes},${bmp.bytesPerRow},${bmp.hexData}`;
+  // Veri ACS run-length ile sıkıştırılır (Labelery ile aynı biçim) -- çıktı ~5-10x küçülür.
+  const data = encodeAcsFromHex(bmp.hexData, bmp.bytesPerRow);
+  return `^GFA,${bmp.totalBytes},${bmp.totalBytes},${bmp.bytesPerRow},${data}`;
 }
 
 /** Bir data URL / img elementini verilen dot boyutuna çizip mono bitmap üretir. */
